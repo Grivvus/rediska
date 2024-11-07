@@ -6,22 +6,41 @@ import (
 	"os"
 )
 
-// Ensures gofmt doesn't remove the "net" and "os" imports in stage 1 (feel free to remove this!)
-var _ = net.Listen
-var _ = os.Exit
-
 func main() {
 	// You can use print statements as follows for debugging, they'll be visible when running tests.
 	fmt.Println("Logs from your program will appear here!")
 
-	l, err := net.Listen("tcp", "0.0.0.0:6379")
+	listner, err := net.Listen("tcp", "0.0.0.0:6379")
+	defer listner.Close()
 	if err != nil {
 		fmt.Println("Failed to bind to port 6379")
 		os.Exit(1)
 	}
-	_, err = l.Accept()
-	if err != nil {
-		fmt.Println("Error accepting connection: ", err.Error())
-		os.Exit(1)
-	}
+    for {
+        connection, err := listner.Accept()
+        if err != nil {
+            fmt.Println("Error accepting connection: ", err.Error())
+            os.Exit(1)
+        }
+        go handleConnection(connection)
+    }
+}
+
+func handleConnection(connection net.Conn) {
+	defer connection.Close()
+	read_buffer := make([]byte, 100)
+    for {
+        n, err := connection.Read(read_buffer)
+        if n == 0 {
+            break
+        }
+        if err != nil {
+            fmt.Println("Error accepting connection: ", err.Error())
+            os.Exit(1)
+        }
+        fmt.Printf("%v bytes recieved\n", n)
+        if string(read_buffer[:n]) == "*1\r\n$4\r\nPING\r\n" {
+            connection.Write([]byte("+PONG\r\n"))
+        }
+    }
 }
