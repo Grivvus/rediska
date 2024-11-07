@@ -41,6 +41,8 @@ func handleConnection(connection net.Conn) {
         fmt.Printf("%v bytes recieved\n", n)
         if string(read_buffer[:n]) == "*1\r\n$4\r\nPING\r\n" {
             connection.Write([]byte("+PONG\r\n"))
+        } else if string(read_buffer[4:14]) == "$4\r\nECHO\r\n"{
+            connection.Write(read_buffer[14:n])
         }
     }
 }
