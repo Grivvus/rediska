@@ -5,9 +5,17 @@ import (
 	"net"
 	"os"
     "strings"
+    "strconv"
+    "time"
 )
 
+type NowAndDuration struct {
+    now time.Time
+    expires time.Duration
+}
+
 var storage map[string]string = make(map[string]string)
+var timestamps map[string]NowAndDuration = make(map[string]NowAndDuration)
 
 func main() {
 	// You can use print statements as follows for debugging, they'll be visible when running tests.
@@ -43,24 +51,38 @@ func handleConnection(connection net.Conn) {
 		}
 		fmt.Printf("%v bytes recieved\n", n)
         parsedData := parse(readBuffer)
-		if parsedData[0] == "PING"{
+		if strings.ToUpper(parsedData[0]) == "PING"{
 			connection.Write([]byte("+PONG\r\n"))
-		} else if parsedData[0] == "ECHO"{
+		} else if strings.ToUpper(parsedData[0]) == "ECHO"{
 			connection.Write(readBuffer[14:n])
-		} else if parsedData[0] == "SET"{
-            if len(parsedData) != 3{
-                fmt.Fprintf(os.Stderr,"[Error] unexpected lenght of parsedData while setting data; expected 3, got %v", len(parsedData))
-                os.Exit(1)
+		} else if strings.ToUpper(parsedData[0]) == "SET"{
+            if len(parsedData) > 3 && parsedData[3] == "px"{
+                parsed, err := strconv.Atoi(parsedData[4])
+                if err != nil {
+                    fmt.Fprintf(os.Stderr, "Invalid data for time delay\n Can't parse %v to int\n", parsedData[4])
+                    os.Exit(1)
+                }
+                nad := new(NowAndDuration)
+                nad.expires = time.Duration(parsed * 1_000_000)
+                nad.now = time.Now()
+                timestamps[parsedData[1]] = *nad
             }
             storage[parsedData[1]] = parsedData[2]
             connection.Write([]byte("+OK\r\n"))
-		} else if parsedData[0] == "GET"{
-            // if len(parsedData) != 2{
-            //     fmt.Fprintf(os.Stderr,"[Error] unexpected lenght of parsedData while getting data; expected 2, got %v", len(parsedData))
-            //     os.Exit(1)
-            // }
-            retStr := fmt.Sprintf("+%v\r\n", storage[parsedData[1]])
-            connection.Write([]byte(retStr))
+		} else if strings.ToUpper(parsedData[0]) == "GET"{
+            nad, exist := timestamps[parsedData[1]]
+            if !exist{
+                retStr := fmt.Sprintf("+%v\r\n", storage[parsedData[1]])
+                connection.Write([]byte(retStr))
+            } else {
+                if time.Now().Sub(nad.now) > nad.expires{
+                    retStr := fmt.Sprintf("$-1\r\n")
+                    connection.Write([]byte(retStr))
+                } else {
+                    retStr := fmt.Sprintf("+%v\r\n", storage[parsedData[1]])
+                    connection.Write([]byte(retStr))
+                }
+            }
 		}
 	}
 }
