@@ -36,9 +36,9 @@ func main() {
 			dbfilename = args[i+1]
 		}
 	}
-    if dir != "" || dbfilename != ""{
-	    LoadSave(dir + "/", dbfilename)
-    }
+	if dir != "" || dbfilename != "" {
+		LoadSave(dir+"/", dbfilename)
+	}
 
 	listner, err := net.Listen("tcp", "0.0.0.0:6379")
 	defer listner.Close()
@@ -113,22 +113,22 @@ func parse(buffer []byte) []string {
 
 func LoadSave(dir, dbfilename string) {
 	parsedFile := ParseRDBFile(dir, dbfilename)
-    var fileStorage map[string]string
-    var fileTime map[string]NowAndDuration
-    if parsedFile == nil {
-        return
-    }
+	var fileStorage map[string]string
+	var fileTime map[string]NowAndDuration
+	if parsedFile == nil {
+		return
+	}
 	fileStorage, fileTime = ParseDB(parsedFile[2])
-    storageMu.Lock()
-    defer storageMu.Unlock()
-    for key, value := range fileStorage {
-        storage[key] = value
-    }
-    timeMu.Lock()
-    defer timeMu.Unlock()
-    for key, value := range fileTime {
-        timestamps[key] = value 
-    }
+	storageMu.Lock()
+	defer storageMu.Unlock()
+	for key, value := range fileStorage {
+		storage[key] = value
+	}
+	timeMu.Lock()
+	defer timeMu.Unlock()
+	for key, value := range fileTime {
+		timestamps[key] = value
+	}
 }
 
 func ParseRDBFile(dir, dbfilename string) [][]byte {
@@ -156,71 +156,85 @@ func ParseRDBFile(dir, dbfilename string) [][]byte {
 	metadataStart := FindBytes(data, 0xfa)
 	dbStart := FindBytes(data, 0xfe)
 	endOfFile := FindBytes(data, 0xff)
-    if dbStart == -1 || metadataStart == -1 || endOfFile == -1 {
-        fmt.Fprintf(os.Stderr, "metadataStart = %v, dbStart = %v, endOfFile = %v\n", metadataStart, dbStart, endOfFile)
-        return nil
-    }
+	if dbStart == -1 || metadataStart == -1 || endOfFile == -1 {
+		fmt.Fprintf(os.Stderr, "metadataStart = %v, dbStart = %v, endOfFile = %v\n", metadataStart, dbStart, endOfFile)
+		return nil
+	}
 	metadataSection := data[metadataStart:dbStart]
 	dbSection := data[dbStart:endOfFile]
 	crc64Hash := data[endOfFile+1:]
 	return [][]byte{redisMagicString, metadataSection, dbSection, crc64Hash}
 }
 
-func ParseDB(dbSection []byte) (map[string]string, map[string]NowAndDuration) {
-	dbSections := make([][]byte, 0)
-	dbSectionStringSplitted := strings.Split(string(dbSection), string(0xfe))
-	for _, str := range dbSectionStringSplitted {
-		dbSections = append(dbSections, []byte(str))
+func SplitByteArray(arr []byte, sep byte) [][]byte {
+	res := make([][]byte, 0)
+	temp := make([]byte, 0)
+	start := 1
+	for i := 1; i < len(arr); i++ {
+		if arr[i] == sep {
+			res = append(res, arr[start:i])
+			start = i + 1
+		} else {
+			temp = append(temp, arr[i])
+		}
 	}
-    fileStorage := make(map[string]string)
-    fileTime := make(map[string]NowAndDuration)
-    for _, section := range dbSections {
-        ParseDBSection(section, fileStorage, fileTime)
-    }
-    return fileStorage, fileTime
+	if start < len(arr) {
+		res = append(res, arr[start:])
+	}
+	return res
+}
+
+func ParseDB(dbSection []byte) (map[string]string, map[string]NowAndDuration) {
+	dbSections := SplitByteArray(dbSection, 0xfe)
+	fileStorage := make(map[string]string)
+	fileTime := make(map[string]NowAndDuration)
+	for _, section := range dbSections {
+		ParseDBSection(section, fileStorage, fileTime)
+	}
+	return fileStorage, fileTime
 }
 
 func ParseDBSection(dbSection []byte, fileStorage map[string]string, fileTime map[string]NowAndDuration) {
-    dbIndex := dbSection[1]
-    var valuesNumber byte
-    var expiresNumber byte
-    // may needed later
-    _ = expiresNumber
-    _ = dbIndex
-    if dbSection[2] == 0xfb {
-        valuesNumber = dbSection[3]
-        expiresNumber = dbSection[4]
-    }
-    i := 5
-    for range valuesNumber {
-        if dbSection[i] == 0x00 {
-            // no time expiration
-            // parsing regular value
-            i++
-            lenOfKey := dbSection[i]
-            i++
-            key := dbSection[i:i + int(lenOfKey)]
-            i += int(lenOfKey)
-            lenOfValue := dbSection[i]
-            i++
-            value := dbSection[i: i + int(lenOfValue)]
-            i += int(lenOfKey)
-            fileStorage[string(key)] = string(value)
-        } else if dbSection[i] == 0xfc {
-            // timestamp in millisecond
-            // 8 bytes for it
-            // 8 bytes unsigned
-            panic("Not implemented")
-        } else if dbSection[i] == 0xfd {
-            // timestamp in seconds
-            // 4 bytes value
-            // 4 bytes unsigned
-            panic("Not implemented")
-        } else {
-            fmt.Fprintf(os.Stderr, "Unexpected byte on %v index while parsing db section with %v value\n", i, dbSection[i])
-            os.Exit(1)
-        }
-    }
+	dbIndex := dbSection[0]
+	var valuesNumber byte
+	var expiresNumber byte
+	// may needed later
+	_ = expiresNumber
+	_ = dbIndex
+	if dbSection[1] == 0xfb {
+		valuesNumber = dbSection[2]
+		expiresNumber = dbSection[3]
+	}
+	i := 4
+	for range valuesNumber {
+		if dbSection[i] == 0x00 {
+			// no time expiration
+			// parsing regular value
+			i++
+			lenOfKey := dbSection[i]
+			i++
+			key := dbSection[i : i+int(lenOfKey)]
+			i += int(lenOfKey)
+			lenOfValue := dbSection[i]
+			i++
+			value := dbSection[i : i+int(lenOfValue)]
+			i += int(lenOfValue)
+			fileStorage[string(key)] = string(value)
+		} else if dbSection[i] == 0xfc {
+			// timestamp in millisecond
+			// 8 bytes for it
+			// 8 bytes unsigned
+			panic("Not implemented")
+		} else if dbSection[i] == 0xfd {
+			// timestamp in seconds
+			// 4 bytes value
+			// 4 bytes unsigned
+			panic("Not implemented")
+		} else {
+			fmt.Fprintf(os.Stderr, "Unexpected byte on %v index while parsing db section with %v value\n", i, dbSection[i])
+			os.Exit(1)
+		}
+	}
 }
 
 func FindBytes(source []byte, target byte) int {
