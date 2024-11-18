@@ -224,12 +224,50 @@ func ParseDBSection(dbSection []byte, fileStorage map[string]string, fileTime ma
 			// timestamp in millisecond
 			// 8 bytes for it
 			// 8 bytes unsigned
-			panic("Not implemented")
+            i++
+            var milliseconds uint64
+            for j := range 8 {
+                milliseconds += (uint64(dbSection[i]) << (j * 8))
+                i++
+            }
+			i++
+			lenOfKey := dbSection[i]
+			i++
+			key := dbSection[i : i+int(lenOfKey)]
+			i += int(lenOfKey)
+			lenOfValue := dbSection[i]
+			i++
+			value := dbSection[i : i+int(lenOfValue)]
+			i += int(lenOfValue)
+			fileStorage[string(key)] = string(value)
+            t := new(NowAndDuration)
+            t.now = time.Now()
+            t.expires = time.Duration((milliseconds - uint64(time.Now().Unix() * 1000)) * 1_000_000)
+            fileTime[string(key)] = *t
 		} else if dbSection[i] == 0xfd {
 			// timestamp in seconds
 			// 4 bytes value
 			// 4 bytes unsigned
-			panic("Not implemented")
+            var seconds uint64
+            i++
+            for j := range 4 {
+                seconds += (uint64(dbSection[i]) << (j * 8))
+                i++
+            }
+			i++
+			lenOfKey := dbSection[i]
+			i++
+			key := dbSection[i : i+int(lenOfKey)]
+			i += int(lenOfKey)
+			lenOfValue := dbSection[i]
+			i++
+			value := dbSection[i : i+int(lenOfValue)]
+			i += int(lenOfValue)
+			fileStorage[string(key)] = string(value)
+            t := new(NowAndDuration)
+            t.now = time.Now()
+            t.expires = time.Duration((seconds - uint64(time.Now().Unix())) * 1_000_000)
+            fileTime[string(key)] = *t
 		} else {
 			fmt.Fprintf(os.Stderr, "Unexpected byte on %v index while parsing db section with %v value\n", i, dbSection[i])
 			os.Exit(1)
