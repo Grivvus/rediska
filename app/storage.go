@@ -1,13 +1,13 @@
 package main
 
 import (
+	"fmt"
+	"net"
+	"os"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
-    "strconv"
-    "strings"
-    "net"
-    "os"
-    "fmt"
 )
 
 type NowAndDuration struct {
@@ -15,6 +15,7 @@ type NowAndDuration struct {
 	expires time.Duration
 }
 
+// could be RWMutex
 var storageMu sync.Mutex = *new(sync.Mutex)
 var storage map[string]string = make(map[string]string)
 var timeMu sync.Mutex = *new(sync.Mutex)
@@ -50,8 +51,8 @@ func Get(parsedData []string, connection net.Conn) {
 		retStr := fmt.Sprintf("+%v\r\n", storage[parsedData[1]])
 		connection.Write([]byte(retStr))
 	} else {
-		if time.Now().Sub(nad.now) > nad.expires {
-			retStr := fmt.Sprintf("$-1\r\n")
+		if time.Since(nad.now) > nad.expires {
+			retStr := "$-1\r\n"
 			connection.Write([]byte(retStr))
 		} else {
 			retStr := fmt.Sprintf("+%v\r\n", storage[parsedData[1]])

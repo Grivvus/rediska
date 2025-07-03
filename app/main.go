@@ -10,7 +10,7 @@ import (
 func main() {
 	// You can use print statements as follows for debugging, they'll be visible when running tests.
 	fmt.Println("Logs from your program will appear here!")
-    settings := GetSettings()
+	settings := GetSettings()
 	args := os.Args
 	for i, arg := range args {
 		if arg == "--dir" {
@@ -27,8 +27,13 @@ func main() {
 		LoadSave(settings.RdbDir+"/", settings.RdbFilename)
 	}
 
-	listner, err := net.Listen("tcp", "0.0.0.0:" + settings.Port)
-	defer listner.Close()
+	listner, err := net.Listen("tcp", "0.0.0.0:"+settings.Port)
+	defer func() {
+		err := listner.Close()
+		if err != nil {
+			panic("failed to Close listner")
+		}
+	}()
 	if err != nil {
 		fmt.Println("Failed to bind to port " + config.Port)
 		os.Exit(1)
@@ -76,6 +81,8 @@ func handleConnection(connection net.Conn) {
 					connection.Write([]byte(retStr))
 				}
 			}
+		} else if strings.ToUpper(parsedData[0]) == "INFO" {
+			connection.Write([]byte(GetInfo()))
 		} else if strings.ToUpper(parsedData[0]) == "KEYS" {
 			if parsedData[1] != "*" {
 				panic("KEYS command not fully implemented\n")
@@ -85,4 +92,12 @@ func handleConnection(connection net.Conn) {
 
 		}
 	}
+}
+
+func Encode(s string) string {
+	return fmt.Sprintf("$%d\r\n%s\r\n", len(s), s)
+}
+
+func Merge(s1, s2 string) string {
+	return s1 + s2
 }
