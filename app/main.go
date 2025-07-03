@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"net"
 	"os"
-	"strconv"
 	"strings"
 )
 
@@ -28,12 +27,10 @@ func main() {
 			hostPort := strings.Split(args[i+1], " ")
 			masterHost := hostPort[0]
 			masterPort := hostPort[1]
+			fmt.Println(masterHost, masterPort)
 			settings.MasterHost = masterHost
-			var err error
-			settings.MasterPort, err = strconv.Atoi(masterPort)
-			if err != nil {
-				panic("Can't convert port " + masterPort + " to int")
-			}
+			settings.MasterPort = masterPort
+			Ping()
 		}
 	}
 	if settings.RdbDir != "" || settings.RdbFilename != "" {
@@ -84,6 +81,8 @@ func handleConnection(connection net.Conn) {
 			Set(parsedData, connection)
 		} else if strings.ToUpper(parsedData[0]) == "GET" {
 			Get(parsedData, connection)
+		} else if strings.ToUpper(parsedData[0]) == "PING" {
+			Ping()
 		} else if strings.ToUpper(parsedData[0]) == "CONFIG" {
 			if strings.ToUpper(parsedData[1]) == "GET" {
 				if strings.ToUpper(parsedData[2]) == "DIR" {
@@ -107,10 +106,22 @@ func handleConnection(connection net.Conn) {
 	}
 }
 
-func Encode(s string) string {
-	return fmt.Sprintf("$%d\r\n%s\r\n", len(s), s)
+func Ping() {
+	s := "*1\r\n$4\r\nPING\r\n"
+	conn := GetMasterConnection()
+	defer func() {
+		err := conn.Close()
+		if err != nil {
+			panic("Can't close connection to master:" + err.Error())
+		}
+	}()
+	conn.Write([]byte(s))
 }
 
-func Merge(s1, s2 string) string {
-	return s1 + s2
+func GetMasterConnection() net.Conn {
+	masterConn, err := net.Dial("tcp", GetSettings().MasterHost+":"+GetSettings().MasterPort)
+	if err != nil {
+		panic("Can't connect to master:" + err.Error())
+	}
+	return masterConn
 }
