@@ -8,6 +8,8 @@ type redisConfig struct {
 	Port             string
 	Role             string
 	ConnectedSlaves  int
+	MasterHost       string
+	MasterPort       int
 	MasterReplid     []byte
 	MasterReplOffset int
 }

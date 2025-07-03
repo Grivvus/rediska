@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"strconv"
 	"strings"
 )
 
@@ -21,6 +22,18 @@ func main() {
 		}
 		if arg == "--port" {
 			settings.Port = args[i+1]
+		}
+		if arg == "--replicaof" {
+			settings.Role = "slave"
+			hostPort := strings.Split(args[i+1], " ")
+			masterHost := hostPort[0]
+			masterPort := hostPort[1]
+			settings.MasterHost = masterHost
+			var err error
+			settings.MasterPort, err = strconv.Atoi(masterPort)
+			if err != nil {
+				panic("Can't convert port " + masterPort + " to int")
+			}
 		}
 	}
 	if settings.RdbDir != "" || settings.RdbFilename != "" {
