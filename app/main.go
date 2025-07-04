@@ -139,6 +139,12 @@ func Handshake() {
 	if err != nil {
 		panic("Can't read from master: " + err.Error())
 	}
+	Psync(conn)
+	_, err = conn.Read(buffer)
+	fmt.Println(string(buffer))
+	if err != nil {
+		panic("Can't read from master: " + err.Error())
+	}
 }
 
 func ReplconfPort(conn net.Conn) {
@@ -148,5 +154,10 @@ func ReplconfPort(conn net.Conn) {
 
 func ReplconfCapa(conn net.Conn) {
 	s := "*3\r\n$8\r\nREPLCONF\r\n$4\r\ncapa\r\n$6\r\npsync2\r\n"
+	conn.Write([]byte(s))
+}
+
+func Psync(conn net.Conn) {
+	s := "*3\r\n$5\r\nPSYNC\r\n$1\r\n?\r\n$2\r\n-1\r\n"
 	conn.Write([]byte(s))
 }
