@@ -122,20 +122,20 @@ func Handshake() {
 	defer conn.Close()
 	buffer := make([]byte, 100)
 	Ping(conn)
-	ans, err := conn.Read(buffer)
-	fmt.Println(ans)
+	_, err := conn.Read(buffer)
+	fmt.Println(string(buffer))
 	if err != nil {
 		panic("Can't read from master: " + err.Error())
 	}
 	ReplconfPort(conn)
-	ans, err = conn.Read(buffer)
-	fmt.Println(ans)
+	_, err = conn.Read(buffer)
+	fmt.Println(string(buffer))
 	if err != nil {
 		panic("Can't read from master: " + err.Error())
 	}
 	ReplconfCapa(conn)
-	ans, err = conn.Read(buffer)
-	fmt.Println(ans)
+	_, err = conn.Read(buffer)
+	fmt.Println(string(buffer))
 	if err != nil {
 		panic("Can't read from master: " + err.Error())
 	}
