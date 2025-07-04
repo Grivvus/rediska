@@ -30,7 +30,7 @@ func main() {
 			fmt.Println(masterHost, masterPort)
 			settings.MasterHost = masterHost
 			settings.MasterPort = masterPort
-			Ping()
+			Handshake()
 		}
 	}
 	if settings.RdbDir != "" || settings.RdbFilename != "" {
@@ -81,8 +81,6 @@ func handleConnection(connection net.Conn) {
 			Set(parsedData, connection)
 		} else if strings.ToUpper(parsedData[0]) == "GET" {
 			Get(parsedData, connection)
-		} else if strings.ToUpper(parsedData[0]) == "PING" {
-			Ping()
 		} else if strings.ToUpper(parsedData[0]) == "CONFIG" {
 			if strings.ToUpper(parsedData[1]) == "GET" {
 				if strings.ToUpper(parsedData[2]) == "DIR" {
@@ -106,15 +104,8 @@ func handleConnection(connection net.Conn) {
 	}
 }
 
-func Ping() {
+func Ping(conn net.Conn) {
 	s := "*1\r\n$4\r\nPING\r\n"
-	conn := GetMasterConnection()
-	defer func() {
-		err := conn.Close()
-		if err != nil {
-			panic("Can't close connection to master:" + err.Error())
-		}
-	}()
 	conn.Write([]byte(s))
 }
 
@@ -124,4 +115,38 @@ func GetMasterConnection() net.Conn {
 		panic("Can't connect to master:" + err.Error())
 	}
 	return masterConn
+}
+
+func Handshake() {
+	conn := GetMasterConnection()
+	defer conn.Close()
+	buffer := make([]byte, 100)
+	Ping(conn)
+	ans, err := conn.Read(buffer)
+	fmt.Println(ans)
+	if err != nil {
+		panic("Can't read from master: " + err.Error())
+	}
+	ReplconfPort(conn)
+	ans, err = conn.Read(buffer)
+	fmt.Println(ans)
+	if err != nil {
+		panic("Can't read from master: " + err.Error())
+	}
+	ReplconfCapa(conn)
+	ans, err = conn.Read(buffer)
+	fmt.Println(ans)
+	if err != nil {
+		panic("Can't read from master: " + err.Error())
+	}
+}
+
+func ReplconfPort(conn net.Conn) {
+	s := fmt.Sprintf("*3\r\n$8\r\nREPLCONF\r\n$14\r\nlistening-port\r\n$4\r\n%v\r\n", GetSettings().Port)
+	conn.Write([]byte(s))
+}
+
+func ReplconfCapa(conn net.Conn) {
+	s := "*3\r\n$8\r\nREPLCONF\r\n$4\r\ncapa\r\n$6\r\npsync2\r\n"
+	conn.Write([]byte(s))
 }
