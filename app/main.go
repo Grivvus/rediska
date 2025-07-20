@@ -99,9 +99,12 @@ func handleConnection(connection net.Conn) {
 			}
 			Keys(parsedData, connection, parsedData[1])
 		} else if strings.ToUpper(parsedData[0]) == "SAVE" {
-
 		} else if strings.ToUpper(parsedData[0]) == "REPLCONF" {
 			retStr := "+OK\r\n"
+			connection.Write([]byte(retStr))
+		} else if strings.ToUpper(parsedData[0]) == "PSYNC" {
+			masterID := "8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb"
+			retStr := fmt.Sprintf("+FULLRESYNC %s 0\r\n", masterID)
 			connection.Write([]byte(retStr))
 		}
 	}
