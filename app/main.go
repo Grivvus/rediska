@@ -59,7 +59,12 @@ func main() {
 }
 
 func handleConnection(connection net.Conn) {
-	defer connection.Close()
+	defer func() {
+		err := connection.Close()
+		if err != nil {
+			panic(err.Error())
+		}
+	}()
 	readBuffer := make([]byte, 100)
 	for {
 		n, err := connection.Read(readBuffer)
@@ -106,8 +111,18 @@ func handleConnection(connection net.Conn) {
 			masterID := "8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb"
 			retStr := fmt.Sprintf("+FULLRESYNC %s 0\r\n", masterID)
 			connection.Write([]byte(retStr))
+			sendRdbFile(connection)
 		}
 	}
+}
+
+func sendRdbFile(connection net.Conn) {
+	file, err := os.ReadFile("empty.rdb")
+	if err != nil {
+		panic("Can't read rdb file " + err.Error())
+	}
+	length := len(file)
+	connection.Write([]byte(fmt.Sprintf("$%d\r\n%s", length, file)))
 }
 
 func Ping(conn net.Conn) {
