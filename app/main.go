@@ -100,6 +100,9 @@ func handleConnection(connection net.Conn) {
 			Keys(parsedData, connection, parsedData[1])
 		} else if strings.ToUpper(parsedData[0]) == "SAVE" {
 
+		} else if strings.ToUpper(parsedData[0]) == "REPLCONF" {
+			retStr := "+OK\r\n"
+			connection.Write([]byte(retStr))
 		}
 	}
 }
