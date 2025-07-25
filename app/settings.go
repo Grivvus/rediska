@@ -9,7 +9,7 @@ type redisConfig struct {
 	RdbDir           string
 	RdbFilename      string
 	Port             string
-	Role             string
+	Role             RoleType
 	ConnectedSlaves  int
 	MasterHost       string
 	MasterPort       string
@@ -17,20 +17,27 @@ type redisConfig struct {
 	MasterReplOffset int
 }
 
+type RoleType = int
+
+const (
+	Master RoleType = iota
+	Replica
+)
+
 var config *redisConfig = nil
 
 func GetSettings() *redisConfig {
 	if config == nil {
 		config = new(redisConfig)
 		config.Port = "6379"
-		config.Role = "master"
+		config.Role = Master
 		generateReplid()
 	}
 	return config
 }
 
 func GetInfo() string {
-	res := Encode(fmt.Sprintf("role:%v\r\nmaster_repl_offset:%v\r\nmaster_replid:%s", config.Role, config.MasterReplOffset, config.MasterReplid))
+	res := Encode(fmt.Sprintf("role:%v\r\nmaster_repl_offset:%v\r\nmaster_replid:%s", roleToString(config.Role), config.MasterReplOffset, config.MasterReplid))
 	return res
 }
 
@@ -44,4 +51,14 @@ func generateReplid() {
 		replid[i] = characters[rand.Int()%len(characters)]
 	}
 	config.MasterReplid = replid
+}
+
+func roleToString(role RoleType) string {
+	if role == Master {
+		return "master"
+	} else if role == Replica {
+		return "slave"
+	} else {
+		panic("Unknown RoleType")
+	}
 }

@@ -4,8 +4,13 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"slices"
 	"strings"
 )
+
+var WriteCommands = []string{"SET", "DEL"}
+
+var knownReplicas = make([]net.Conn, 0)
 
 func main() {
 	// You can use print statements as follows for debugging, they'll be visible when running tests.
@@ -23,7 +28,7 @@ func main() {
 			settings.Port = args[i+1]
 		}
 		if arg == "--replicaof" {
-			settings.Role = "slave"
+			settings.Role = Replica
 			hostPort := strings.Split(args[i+1], " ")
 			masterHost := hostPort[0]
 			masterPort := hostPort[1]
@@ -59,12 +64,13 @@ func main() {
 }
 
 func handleConnection(connection net.Conn) {
-	defer func() {
-		err := connection.Close()
-		if err != nil {
-			panic(err.Error())
-		}
-	}()
+	// defer func() {
+	// 	err := connection.Close()
+	// 	if err != nil {
+	// 		panic(err.Error())
+	// 	}
+	// }()
+	connectionNeeded := false
 	readBuffer := make([]byte, 100)
 	for {
 		n, err := connection.Read(readBuffer)
@@ -80,6 +86,8 @@ func handleConnection(connection net.Conn) {
 		fmt.Println(parsedData)
 		if strings.ToUpper(parsedData[0]) == "PING" {
 			connection.Write([]byte("+PONG\r\n"))
+			knownReplicas = append(knownReplicas, connection)
+			connectionNeeded = true
 		} else if strings.ToUpper(parsedData[0]) == "ECHO" {
 			connection.Write(readBuffer[14:n])
 		} else if strings.ToUpper(parsedData[0]) == "SET" {
@@ -113,6 +121,21 @@ func handleConnection(connection net.Conn) {
 			connection.Write([]byte(retStr))
 			sendRdbFile(connection)
 		}
+
+		if GetSettings().Role == Master && slices.Contains(WriteCommands, strings.ToUpper(parsedData[0])) {
+			Propagate(readBuffer[:n])
+		}
+	}
+	if !connectionNeeded {
+		connection.Close()
+	}
+}
+
+func Propagate(data []byte) {
+	fmt.Println("propagating")
+	for _, conn := range knownReplicas {
+		conn.Write(data)
+		fmt.Printf("to replica %v\n", conn.RemoteAddr().String())
 	}
 }
 
@@ -162,7 +185,6 @@ func Handshake() {
 	}
 	Psync(conn)
 	_, err = conn.Read(buffer)
-	fmt.Println(string(buffer))
 	if err != nil {
 		panic("Can't read from master: " + err.Error())
 	}
