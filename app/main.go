@@ -4,11 +4,8 @@ import (
 	"fmt"
 	"net"
 	"os"
-	"slices"
 	"strings"
 )
-
-var WriteCommands = []string{"SET", "DEL"}
 
 var knownReplicas = make([]net.Conn, 0)
 
@@ -34,7 +31,7 @@ func main() {
 			fmt.Println(masterHost, masterPort)
 			settings.MasterHost = masterHost
 			settings.MasterPort = masterPort
-			Handshake()
+			go Handshake()
 		}
 	}
 
@@ -69,16 +66,16 @@ func listen(settings *redisConfig) {
 }
 
 func handleConnection(connection net.Conn) {
-	connectionNeeded := false
+	needed := false
 	defer func() {
-		if !connectionNeeded {
+		if !needed {
 			err := connection.Close()
 			if err != nil {
 				panic("Can't close connection, cause " + err.Error())
 			}
 		}
 	}()
-	readBuffer := make([]byte, 100)
+	readBuffer := make([]byte, 1024)
 	for {
 		n, err := connection.Read(readBuffer)
 		if n == 0 {
@@ -91,55 +88,58 @@ func handleConnection(connection net.Conn) {
 		fmt.Printf("%v bytes recieved\n", n)
 		parsedData := Parse(readBuffer)
 		fmt.Println(parsedData)
-		if strings.ToUpper(parsedData[0]) == "PING" {
-			connection.Write([]byte("+PONG\r\n"))
-			knownReplicas = append(knownReplicas, connection)
-			connectionNeeded = true
-		} else if strings.ToUpper(parsedData[0]) == "ECHO" {
-			connection.Write(readBuffer[14:n])
-		} else if strings.ToUpper(parsedData[0]) == "SET" {
-			Set(parsedData, connection)
-		} else if strings.ToUpper(parsedData[0]) == "GET" {
-			Get(parsedData, connection)
-		} else if strings.ToUpper(parsedData[0]) == "CONFIG" {
-			if strings.ToUpper(parsedData[1]) == "GET" {
-				if strings.ToUpper(parsedData[2]) == "DIR" {
-					retStr := fmt.Sprintf("*2\r\n$3\r\ndir\r\n$%v\r\n%v\r\n", len(GetSettings().RdbDir), GetSettings().RdbDir)
-					connection.Write([]byte(retStr))
-				} else if strings.ToUpper(parsedData[2]) == "DBFILENAME" {
-					retStr := fmt.Sprintf("*2\r\n$10\r\ndbfilename\r\n$%v\r\n%v\r\n", len(GetSettings().RdbFilename), GetSettings().RdbFilename)
-					connection.Write([]byte(retStr))
-				}
-			}
-		} else if strings.ToUpper(parsedData[0]) == "INFO" {
-			connection.Write([]byte(GetInfo()))
-		} else if strings.ToUpper(parsedData[0]) == "KEYS" {
-			if parsedData[1] != "*" {
-				panic("KEYS command not fully implemented\n")
-			}
-			Keys(parsedData, connection, parsedData[1])
-		} else if strings.ToUpper(parsedData[0]) == "SAVE" {
-		} else if strings.ToUpper(parsedData[0]) == "REPLCONF" {
-			retStr := "+OK\r\n"
-			connection.Write([]byte(retStr))
-		} else if strings.ToUpper(parsedData[0]) == "PSYNC" {
-			masterID := "8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb"
-			retStr := fmt.Sprintf("+FULLRESYNC %s 0\r\n", masterID)
-			connection.Write([]byte(retStr))
-			sendRdbFile(connection)
+		if len(parsedData) == 0 {
+			continue
 		}
-
-		if GetSettings().Role == Master && slices.Contains(WriteCommands, strings.ToUpper(parsedData[0])) {
-			Propagate(readBuffer[:n])
+		for _, command := range parsedData {
+			if strings.ToUpper(command[0]) == "PING" {
+				connection.Write([]byte("+PONG\r\n"))
+			} else if strings.ToUpper(command[0]) == "ECHO" {
+				connection.Write(readBuffer[14:n])
+			} else if strings.ToUpper(command[0]) == "SET" {
+				Propagate(EncodeArray(command))
+				go Set(command, connection)
+			} else if strings.ToUpper(command[0]) == "GET" {
+				Get(command, connection)
+			} else if strings.ToUpper(command[0]) == "CONFIG" {
+				if strings.ToUpper(command[1]) == "GET" {
+					if strings.ToUpper(command[2]) == "DIR" {
+						retStr := fmt.Sprintf("*2\r\n$3\r\ndir\r\n$%v\r\n%v\r\n", len(GetSettings().RdbDir), GetSettings().RdbDir)
+						connection.Write([]byte(retStr))
+					} else if strings.ToUpper(command[2]) == "DBFILENAME" {
+						retStr := fmt.Sprintf("*2\r\n$10\r\ndbfilename\r\n$%v\r\n%v\r\n", len(GetSettings().RdbFilename), GetSettings().RdbFilename)
+						connection.Write([]byte(retStr))
+					}
+				}
+			} else if strings.ToUpper(command[0]) == "INFO" {
+				connection.Write([]byte(GetInfo()))
+			} else if strings.ToUpper(command[0]) == "KEYS" {
+				if command[1] != "*" {
+					panic("KEYS command not fully implemented\n")
+				}
+				Keys(command, connection, command[1])
+			} else if strings.ToUpper(command[0]) == "SAVE" {
+			} else if strings.ToUpper(command[0]) == "REPLCONF" {
+				const retStr = "+OK\r\n"
+				if command[1] == "listening-port" {
+					knownReplicas = append(knownReplicas, connection)
+					needed = true
+				}
+				connection.Write([]byte(retStr))
+			} else if strings.ToUpper(command[0]) == "PSYNC" {
+				const masterID = "8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb"
+				retStr := fmt.Sprintf("+FULLRESYNC %s 0\r\n", masterID)
+				connection.Write([]byte(retStr))
+				sendRdbFile(connection)
+			}
 		}
 	}
 }
 
 func Propagate(data []byte) {
-	fmt.Println("propagating")
 	for _, conn := range knownReplicas {
+		fmt.Println("writing to conn", conn.RemoteAddr().String())
 		conn.Write(data)
-		fmt.Printf("to replica %v\n", conn.RemoteAddr().String())
 	}
 }
 
@@ -167,7 +167,6 @@ func GetMasterConnection() net.Conn {
 
 func Handshake() {
 	conn := GetMasterConnection()
-	defer conn.Close()
 	buffer := make([]byte, 100)
 	Ping(conn)
 	_, err := conn.Read(buffer)
@@ -192,6 +191,7 @@ func Handshake() {
 	if err != nil {
 		panic("Can't read from master: " + err.Error())
 	}
+	go handleConnection(conn)
 }
 
 func ReplconfPort(conn net.Conn) {

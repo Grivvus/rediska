@@ -14,9 +14,9 @@ type NowAndDuration struct {
 	expires time.Duration
 }
 
-var storageMu sync.RWMutex = *new(sync.RWMutex)
+var storageMu sync.Mutex = *new(sync.Mutex)
 var storage map[string]string = make(map[string]string)
-var timeMu sync.RWMutex = *new(sync.RWMutex)
+var timeMu sync.Mutex = *new(sync.Mutex)
 var timestamps map[string]NowAndDuration = make(map[string]NowAndDuration)
 
 func Set(parsedData []string, connection net.Conn) {
@@ -36,14 +36,16 @@ func Set(parsedData []string, connection net.Conn) {
 		timestamps[parsedData[1]] = nad
 	}
 	storage[parsedData[1]] = parsedData[2]
-	connection.Write([]byte("+OK\r\n"))
+	if GetSettings().Role == Master {
+		connection.Write([]byte("+OK\r\n"))
+	}
 }
 
 func Get(parsedData []string, connection net.Conn) {
-	timeMu.RLock()
-	storageMu.RLock()
-	defer timeMu.RUnlock()
-	defer storageMu.RUnlock()
+	timeMu.Lock()
+	storageMu.Lock()
+	defer timeMu.Unlock()
+	defer storageMu.Unlock()
 	nad, exist := timestamps[parsedData[1]]
 	if !exist {
 		retStr := fmt.Sprintf("+%v\r\n", storage[parsedData[1]])
@@ -60,8 +62,8 @@ func Get(parsedData []string, connection net.Conn) {
 }
 
 func Keys(parsedData []string, connection net.Conn, pattern string) {
-	storageMu.RLock()
-	defer storageMu.RUnlock()
+	storageMu.Lock()
+	defer storageMu.Unlock()
 	keys := make([]string, 0)
 	for key := range storage {
 		keys = append(keys, key)
