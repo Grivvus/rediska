@@ -48,12 +48,8 @@ func Parse(buffer []byte) [][]string {
 				fmt.Println(string(buffer[index:]))
 			}
 		}
-	} else {
-		if len(splited) > 1 {
-			ret = append(ret, []string{splited[1]})
-		} else {
-			ret = append(ret, []string{splited[0]})
-		}
+	} else if strings.HasPrefix(string(buffer), "$") {
+		ret = append(ret, []string{splited[1]})
 	}
 	return ret
 }
