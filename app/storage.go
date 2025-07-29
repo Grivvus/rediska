@@ -5,7 +5,6 @@ import (
 	"net"
 	"os"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
 )
@@ -15,10 +14,9 @@ type NowAndDuration struct {
 	expires time.Duration
 }
 
-// could be RWMutex
-var storageMu sync.Mutex = *new(sync.Mutex)
+var storageMu sync.RWMutex = *new(sync.RWMutex)
 var storage map[string]string = make(map[string]string)
-var timeMu sync.Mutex = *new(sync.Mutex)
+var timeMu sync.RWMutex = *new(sync.RWMutex)
 var timestamps map[string]NowAndDuration = make(map[string]NowAndDuration)
 
 func Set(parsedData []string, connection net.Conn) {
@@ -32,20 +30,20 @@ func Set(parsedData []string, connection net.Conn) {
 			fmt.Fprintf(os.Stderr, "Invalid data for time delay\n Can't parse %v to int\n", parsedData[4])
 			os.Exit(1)
 		}
-		nad := new(NowAndDuration)
+		nad := NowAndDuration{}
 		nad.expires = time.Duration(parsed * 1_000_000)
 		nad.now = time.Now()
-		timestamps[parsedData[1]] = *nad
+		timestamps[parsedData[1]] = nad
 	}
 	storage[parsedData[1]] = parsedData[2]
 	connection.Write([]byte("+OK\r\n"))
 }
 
 func Get(parsedData []string, connection net.Conn) {
-	timeMu.Lock()
-	storageMu.Lock()
-	defer timeMu.Unlock()
-	defer storageMu.Unlock()
+	timeMu.RLock()
+	storageMu.RLock()
+	defer timeMu.RUnlock()
+	defer storageMu.RUnlock()
 	nad, exist := timestamps[parsedData[1]]
 	if !exist {
 		retStr := fmt.Sprintf("+%v\r\n", storage[parsedData[1]])
@@ -62,8 +60,8 @@ func Get(parsedData []string, connection net.Conn) {
 }
 
 func Keys(parsedData []string, connection net.Conn, pattern string) {
-	storageMu.Lock()
-	defer storageMu.Unlock()
+	storageMu.RLock()
+	defer storageMu.RUnlock()
 	keys := make([]string, 0)
 	for key := range storage {
 		keys = append(keys, key)
@@ -74,15 +72,4 @@ func Keys(parsedData []string, connection net.Conn, pattern string) {
 		retStr += fmt.Sprintf("$%v\r\n%v\r\n", len(keys[i]), keys[i])
 	}
 	connection.Write([]byte(retStr))
-}
-
-func Parse(buffer []byte) []string {
-	splited := strings.Split(string(buffer), "\r\n")
-	var ret []string
-	for i := 1; i < len(splited); i++ {
-		if i%2 == 0 {
-			ret = append(ret, splited[i])
-		}
-	}
-	return ret
 }

@@ -49,9 +49,9 @@ func ParseRDBFile(dir, dbfilename string) [][]byte {
 		os.Exit(1)
 	}
 	redisMagicString := data[:9]
-	metadataStart := findBytes(data, 0xfa)
-	dbStart := findBytes(data, 0xfe)
-	endOfFile := findBytes(data, 0xff)
+	metadataStart := FindBytes(data, 0xfa)
+	dbStart := FindBytes(data, 0xfe)
+	endOfFile := FindBytes(data, 0xff)
 	if dbStart == -1 || metadataStart == -1 || endOfFile == -1 {
 		fmt.Fprintf(os.Stderr, "metadataStart = %v, dbStart = %v, endOfFile = %v\n", metadataStart, dbStart, endOfFile)
 		return nil
@@ -62,26 +62,8 @@ func ParseRDBFile(dir, dbfilename string) [][]byte {
 	return [][]byte{redisMagicString, metadataSection, dbSection, crc64Hash}
 }
 
-func splitByteArray(arr []byte, sep byte) [][]byte {
-	res := make([][]byte, 0)
-	temp := make([]byte, 0)
-	start := 1
-	for i := 1; i < len(arr); i++ {
-		if arr[i] == sep {
-			res = append(res, arr[start:i])
-			start = i + 1
-		} else {
-			temp = append(temp, arr[i])
-		}
-	}
-	if start < len(arr) {
-		res = append(res, arr[start:])
-	}
-	return res
-}
-
 func ParseDB(dbSection []byte) (map[string]string, map[string]NowAndDuration) {
-	dbSections := splitByteArray(dbSection, 0xfe)
+	dbSections := SplitByteArray(dbSection, 0xfe)
 	fileStorage := make(map[string]string)
 	fileTime := make(map[string]NowAndDuration)
 	for _, section := range dbSections {
@@ -169,13 +151,4 @@ func ParseDBSection(dbSection []byte, fileStorage map[string]string, fileTime ma
 			os.Exit(1)
 		}
 	}
-}
-
-func findBytes(source []byte, target byte) int {
-	for i := range source {
-		if source[i] == target {
-			return i
-		}
-	}
-	return -1
 }

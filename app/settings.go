@@ -37,7 +37,7 @@ func GetSettings() *redisConfig {
 }
 
 func GetInfo() string {
-	res := Encode(fmt.Sprintf("role:%v\r\nmaster_repl_offset:%v\r\nmaster_replid:%s", roleToString(config.Role), config.MasterReplOffset, config.MasterReplid))
+	res := EncodeString(fmt.Sprintf("role:%v\r\nmaster_repl_offset:%v\r\nmaster_replid:%s", roleToString(config.Role), config.MasterReplOffset, config.MasterReplid))
 	return res
 }
 
@@ -54,11 +54,12 @@ func generateReplid() {
 }
 
 func roleToString(role RoleType) string {
-	if role == Master {
+	switch role {
+	case Master:
 		return "master"
-	} else if role == Replica {
+	case Replica:
 		return "slave"
-	} else {
-		panic("Unknown RoleType")
+	default:
+		panic("Unkown role type")
 	}
 }

@@ -13,8 +13,7 @@ var WriteCommands = []string{"SET", "DEL"}
 var knownReplicas = make([]net.Conn, 0)
 
 func main() {
-	// You can use print statements as follows for debugging, they'll be visible when running tests.
-	fmt.Println("Logs from your program will appear here!")
+	fmt.Println("Rediska startup")
 	settings := GetSettings()
 	args := os.Args
 	for i, arg := range args {
@@ -38,12 +37,18 @@ func main() {
 			Handshake()
 		}
 	}
+
 	if settings.RdbDir != "" || settings.RdbFilename != "" {
 		LoadSave(settings.RdbDir+"/", settings.RdbFilename)
 	}
 
+	listen(settings)
+}
+
+func listen(settings *redisConfig) {
 	listner, err := net.Listen("tcp", "0.0.0.0:"+settings.Port)
 	defer func() {
+		fmt.Printf("Close listner on %v:%v\n", "0.0.0.0", settings.Port)
 		err := listner.Close()
 		if err != nil {
 			panic("failed to Close listner")
@@ -64,13 +69,15 @@ func main() {
 }
 
 func handleConnection(connection net.Conn) {
-	// defer func() {
-	// 	err := connection.Close()
-	// 	if err != nil {
-	// 		panic(err.Error())
-	// 	}
-	// }()
 	connectionNeeded := false
+	defer func() {
+		if !connectionNeeded {
+			err := connection.Close()
+			if err != nil {
+				panic("Can't close connection, cause " + err.Error())
+			}
+		}
+	}()
 	readBuffer := make([]byte, 100)
 	for {
 		n, err := connection.Read(readBuffer)
@@ -125,9 +132,6 @@ func handleConnection(connection net.Conn) {
 		if GetSettings().Role == Master && slices.Contains(WriteCommands, strings.ToUpper(parsedData[0])) {
 			Propagate(readBuffer[:n])
 		}
-	}
-	if !connectionNeeded {
-		connection.Close()
 	}
 }
 
