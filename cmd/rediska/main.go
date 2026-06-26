@@ -6,10 +6,10 @@ import (
 	"log/slog"
 	"net"
 	"os"
-	"strconv"
 	"strings"
 
 	"github.com/codecrafters-io/redis-starter-go/internal/config"
+	"github.com/codecrafters-io/redis-starter-go/internal/encoder"
 	"github.com/codecrafters-io/redis-starter-go/internal/storage"
 )
 
@@ -51,7 +51,7 @@ func main() {
 func listen(cfg config.RedisConfig, st *storage.Storage) error {
 	listner, err := net.Listen("tcp", "0.0.0.0:"+cfg.Port)
 	if err != nil {
-		return fmt.Errorf("Failed to bind to port %v: %w", cfg.Port, err)
+		return fmt.Errorf("failed to bind to port %v: %w", cfg.Port, err)
 	}
 	defer func() {
 		slog.Info("Close listner", "host", "0.0.0.0", "port", cfg.Port)
@@ -83,10 +83,13 @@ func handleConnection(
 			break
 		}
 		if err != nil {
-			return fmt.Errorf("Error accepting connection: %w", err)
+			return fmt.Errorf("error accepting connection: %w", err)
 		}
 		log.Printf("%v bytes recieved\n", n)
-		parsedData := Parse(readBuffer)
+		parsedData, err := encoder.Parse(readBuffer)
+		if err != nil {
+			return fmt.Errorf("can't parse accepted data: %w", err)
+		}
 		fmt.Println(parsedData)
 		if len(parsedData) == 0 {
 			continue
@@ -97,7 +100,7 @@ func handleConnection(
 			} else if strings.ToUpper(command[0]) == "ECHO" {
 				connection.Write(readBuffer[14:n])
 			} else if strings.ToUpper(command[0]) == "SET" {
-				Propagate([]net.Conn{}, EncodeArray(command))
+				Propagate([]net.Conn{}, encoder.EncodeArray(command))
 				msg, err := st.Set(command)
 				if err != nil {
 				}
@@ -120,10 +123,10 @@ func handleConnection(
 					}
 				}
 			} else if strings.ToUpper(command[0]) == "INFO" {
-				connection.Write([]byte(EncodeString(cfg.GetInfo())))
+				connection.Write(encoder.EncodeString(cfg.GetInfo()))
 			} else if strings.ToUpper(command[0]) == "KEYS" {
 				if command[1] != "*" {
-					panic("KEYS command not fully implemented\n")
+					return fmt.Errorf("KEYS command not fully implemented")
 				}
 				st.Keys(command, command[1])
 			} else if strings.ToUpper(command[0]) == "SAVE" {
@@ -157,13 +160,17 @@ func Propagate(knownReplicas []net.Conn, data []byte) {
 	}
 }
 
-func sendRdbFile(connection net.Conn) {
+func sendRdbFile(connection net.Conn) error {
 	file, err := os.ReadFile("empty.rdb")
 	if err != nil {
-		panic("Can't read rdb file " + err.Error())
+		return fmt.Errorf("can't read rdb file: %w", err)
 	}
 	length := len(file)
-	connection.Write([]byte(fmt.Sprintf("$%d\r\n%s", length, file)))
+	_, err = connection.Write([]byte(fmt.Sprintf("$%d\r\n%s", length, file)))
+	if err != nil {
+		return fmt.Errorf("can't write rdb file to replica connection: %w", err)
+	}
+	return nil
 }
 
 func Ping(conn net.Conn) {
@@ -225,84 +232,4 @@ func ReplconfCapa(conn net.Conn) {
 func Psync(conn net.Conn) {
 	s := "*3\r\n$5\r\nPSYNC\r\n$1\r\n?\r\n$2\r\n-1\r\n"
 	conn.Write([]byte(s))
-}
-
-func EncodeString(s string) string {
-	return fmt.Sprintf("$%d\r\n%s\r\n", len(s), s)
-}
-
-func EncodeArray(data []string) []byte {
-	b := strings.Builder{}
-	b.WriteString(fmt.Sprintf("*%v\r\n", len(data)))
-	for _, s := range data {
-		b.WriteString(fmt.Sprintf("$%v\r\n", len(s)))
-		b.WriteString(s)
-		b.WriteString("\r\n")
-	}
-	fmt.Println("encoded:", b.String())
-	return []byte(b.String())
-}
-
-func Parse(buffer []byte) [][]string {
-	var ret [][]string
-	var buf []string
-	stringified := string(buffer)
-	splited := strings.Split(stringified, "\r\n")
-	fmt.Println(splited)
-	if buffer[0] == '*' {
-		n, err := strconv.Atoi(splited[0][1:])
-		if err != nil {
-			panic("Can't parse array: " + err.Error())
-		}
-		for i := range n {
-			_, err := strconv.Atoi(splited[i*2+1][1:])
-			if err != nil {
-				panic("Can't parse number")
-			}
-			buf = append(buf, splited[i*2+2])
-		}
-		ret = append(ret, buf[:])
-		if n*2+2 < len(splited) {
-			index := FindBytes(buffer[n*2+2:], '*') + n*2 + 2
-			if index != -1 {
-				ret = append(ret, Parse(buffer[index:])...)
-				fmt.Println(string(buffer[index:]))
-			}
-		}
-	} else if strings.HasPrefix(string(buffer), "$") {
-		ret = append(ret, []string{splited[1]})
-	}
-	return ret
-}
-
-func Merge(s ...string) string {
-	b := strings.Builder{}
-	for _, part := range s {
-		b.WriteString(part)
-	}
-	return b.String()
-}
-
-func FindBytes(source []byte, target byte) int {
-	for i := range source {
-		if source[i] == target {
-			return i
-		}
-	}
-	return -1
-}
-
-func SplitByteArray(arr []byte, sep byte) [][]byte {
-	res := make([][]byte, 0)
-	start := 1
-	for i := 1; i < len(arr); i++ {
-		if arr[i] == sep {
-			res = append(res, arr[start:i])
-			start = i + 1
-		}
-	}
-	if start < len(arr) {
-		res = append(res, arr[start:])
-	}
-	return res
 }
