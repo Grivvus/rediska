@@ -3,10 +3,12 @@ package storage
 import (
 	"fmt"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/codecrafters-io/redis-starter-go/internal/config"
+	"github.com/codecrafters-io/redis-starter-go/internal/encoder"
 )
 
 type NowAndDuration struct {
@@ -71,7 +73,7 @@ func (st *Storage) Get(parsedData []string) (msg []byte) {
 	return []byte(retStr)
 }
 
-func (st *Storage) Keys(parsedData []string, pattern string) (msg []byte) {
+func (st *Storage) Keys(parsedData []string, pattern string) []byte {
 	/*
 		we could try to make this in 1 linear pass, not 2
 		we need to encode information about number of keys
@@ -85,10 +87,11 @@ func (st *Storage) Keys(parsedData []string, pattern string) (msg []byte) {
 	for key := range st.storage {
 		keys = append(keys, key)
 	}
-	l := len(keys)
-	retStr := fmt.Sprintf("*%v\r\n", l)
-	for i := range l {
-		retStr += fmt.Sprintf("$%v\r\n%v\r\n", len(keys[i]), keys[i])
+	var sb strings.Builder
+	header := fmt.Sprintf("*%v\r\n", len(keys))
+	sb.WriteString(header)
+	for _, key := range keys {
+		_, _ = sb.Write(encoder.EncodeString(key))
 	}
-	return []byte(retStr)
+	return []byte(sb.String())
 }

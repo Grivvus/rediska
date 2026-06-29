@@ -96,9 +96,9 @@ func handleConnection(
 		}
 		for _, command := range parsedData {
 			if strings.ToUpper(command[0]) == "PING" {
-				connection.Write([]byte("+PONG\r\n"))
+				_, _ = connection.Write([]byte("+PONG\r\n"))
 			} else if strings.ToUpper(command[0]) == "ECHO" {
-				connection.Write(readBuffer[14:n])
+				_, _ = connection.Write(readBuffer[14:n])
 			} else if strings.ToUpper(command[0]) == "SET" {
 				Propagate([]net.Conn{}, encoder.EncodeArray(command))
 				msg, err := st.Set(command)
@@ -115,15 +115,13 @@ func handleConnection(
 			} else if strings.ToUpper(command[0]) == "CONFIG" {
 				if strings.ToUpper(command[1]) == "GET" {
 					if strings.ToUpper(command[2]) == "DIR" {
-						retStr := fmt.Sprintf("*2\r\n$3\r\ndir\r\n$%v\r\n%v\r\n", len(cfg.RdbDir), cfg.RdbDir)
-						connection.Write([]byte(retStr))
+						_, _ = connection.Write(encoder.EncodeArray([]string{"dir", cfg.RdbDir}))
 					} else if strings.ToUpper(command[2]) == "DBFILENAME" {
-						retStr := fmt.Sprintf("*2\r\n$10\r\ndbfilename\r\n$%v\r\n%v\r\n", len(cfg.RdbFilename), cfg.RdbFilename)
-						connection.Write([]byte(retStr))
+						_, _ = connection.Write([]byte(encoder.EncodeArray([]string{"dbfilename", cfg.RdbFilename})))
 					}
 				}
 			} else if strings.ToUpper(command[0]) == "INFO" {
-				connection.Write(encoder.EncodeString(cfg.GetInfo()))
+				_, _ = connection.Write(encoder.EncodeString(cfg.GetInfo()))
 			} else if strings.ToUpper(command[0]) == "KEYS" {
 				if command[1] != "*" {
 					return fmt.Errorf("KEYS command not fully implemented")
@@ -136,11 +134,11 @@ func handleConnection(
 					knownReplicas = append(knownReplicas, connection)
 					needed = true
 				}
-				connection.Write([]byte(retStr))
+				_, _ = connection.Write([]byte(retStr))
 			} else if strings.ToUpper(command[0]) == "PSYNC" {
 				const masterID = "8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb"
 				retStr := fmt.Sprintf("+FULLRESYNC %s 0\r\n", masterID)
-				connection.Write([]byte(retStr))
+				_, _ = connection.Write([]byte(retStr))
 				sendRdbFile(connection)
 			}
 		}
@@ -156,7 +154,7 @@ func Propagate(knownReplicas []net.Conn, data []byte) {
 			"addr", conn.RemoteAddr().String(),
 			"data", data,
 		)
-		conn.Write(data)
+		_, _ = conn.Write(data)
 	}
 }
 
@@ -174,8 +172,7 @@ func sendRdbFile(connection net.Conn) error {
 }
 
 func Ping(conn net.Conn) {
-	s := "*1\r\n$4\r\nPING\r\n"
-	conn.Write([]byte(s))
+	_, _ = conn.Write(encoder.EncodeArray([]string{"PING"}))
 }
 
 func Handshake(cfg config.RedisConfig, st *storage.Storage) error {
@@ -220,16 +217,13 @@ func GetMasterConnection(cfg config.RedisConfig) (net.Conn, error) {
 }
 
 func ReplconfPort(cfg config.RedisConfig, conn net.Conn) {
-	s := fmt.Sprintf("*3\r\n$8\r\nREPLCONF\r\n$14\r\nlistening-port\r\n$4\r\n%v\r\n", cfg.Port)
-	conn.Write([]byte(s))
+	_, _ = conn.Write([]byte(encoder.EncodeArray([]string{"REPLCONF", "listening-port", cfg.Port})))
 }
 
 func ReplconfCapa(conn net.Conn) {
-	s := "*3\r\n$8\r\nREPLCONF\r\n$4\r\ncapa\r\n$6\r\npsync2\r\n"
-	conn.Write([]byte(s))
+	_, _ = conn.Write([]byte(encoder.EncodeArray([]string{"REPLCONF", "capa", "psync2"})))
 }
 
 func Psync(conn net.Conn) {
-	s := "*3\r\n$5\r\nPSYNC\r\n$1\r\n?\r\n$2\r\n-1\r\n"
-	conn.Write([]byte(s))
+	_, _ = conn.Write([]byte(encoder.EncodeArray([]string{"PSYNC", "?", "-1"})))
 }
