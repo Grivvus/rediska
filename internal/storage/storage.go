@@ -11,15 +11,10 @@ import (
 	"github.com/codecrafters-io/redis-starter-go/internal/config"
 )
 
-type NowAndDuration struct {
-	now     time.Time
-	expires time.Duration
-}
-
 type Storage struct {
 	storage    map[string]string
 	storageMu  sync.RWMutex
-	timestamps map[string]NowAndDuration
+	timestamps map[string]time.Time
 	timeMu     sync.RWMutex
 	cfg        config.RedisConfig
 }
@@ -27,7 +22,7 @@ type Storage struct {
 func NewStorage(cfg config.RedisConfig) *Storage {
 	return &Storage{
 		storage:    make(map[string]string),
-		timestamps: make(map[string]NowAndDuration),
+		timestamps: make(map[string]time.Time),
 		cfg:        cfg,
 	}
 }
@@ -42,10 +37,7 @@ func (st *Storage) Set(parsedData []string) (msg []byte, err error) {
 		if err != nil {
 			return nil, fmt.Errorf("Invalid data for time delay\n Can't parse %v to int\n", parsedData[4])
 		}
-		nad := NowAndDuration{}
-		nad.expires = time.Duration(parsed * int(time.Millisecond))
-		nad.now = time.Now()
-		st.timestamps[parsedData[1]] = nad
+		st.timestamps[parsedData[1]] = time.Now().Add(time.Duration(parsed) * time.Millisecond)
 	}
 	st.storage[parsedData[1]] = parsedData[2]
 	if st.cfg.Role == config.MasterRole {
@@ -59,12 +51,12 @@ func (st *Storage) Get(parsedData []string) (msg []byte) {
 	st.storageMu.RLock()
 	defer st.timeMu.RUnlock()
 	defer st.storageMu.RUnlock()
-	nad, exist := st.timestamps[parsedData[1]]
+	expires, exist := st.timestamps[parsedData[1]]
 	if !exist {
 		retStr := fmt.Sprintf("+%v\r\n", st.storage[parsedData[1]])
 		return []byte(retStr)
 	}
-	if time.Since(nad.now) > nad.expires {
+	if time.Now().After(expires) {
 		retStr := "$-1\r\n"
 		return []byte(retStr)
 	}
