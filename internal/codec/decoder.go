@@ -2,6 +2,7 @@ package codec
 
 import (
 	"fmt"
+	"log"
 	"strconv"
 	"strings"
 )
@@ -11,7 +12,7 @@ func Parse(buffer []byte) ([][]string, error) {
 	var buf []string
 	stringified := string(buffer)
 	splited := strings.Split(stringified, "\r\n")
-	fmt.Println(splited)
+	log.Println(splited)
 	if buffer[0] == '*' {
 		n, err := strconv.Atoi(splited[0][1:])
 		if err != nil {
@@ -33,7 +34,7 @@ func Parse(buffer []byte) ([][]string, error) {
 					return nil, fmt.Errorf("parsing error: %w", err)
 				}
 				ret = append(ret, innerParse...)
-				fmt.Println(string(buffer[index:]))
+				log.Println(string(buffer[index:]))
 			}
 		}
 	} else if strings.HasPrefix(string(buffer), "$") {
