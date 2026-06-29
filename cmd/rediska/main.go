@@ -8,8 +8,8 @@ import (
 	"os"
 	"strings"
 
+	"github.com/codecrafters-io/redis-starter-go/internal/codec"
 	"github.com/codecrafters-io/redis-starter-go/internal/config"
-	"github.com/codecrafters-io/redis-starter-go/internal/encoder"
 	"github.com/codecrafters-io/redis-starter-go/internal/storage"
 )
 
@@ -86,7 +86,7 @@ func handleConnection(
 			return fmt.Errorf("error accepting connection: %w", err)
 		}
 		log.Printf("%v bytes recieved\n", n)
-		parsedData, err := encoder.Parse(readBuffer)
+		parsedData, err := codec.Parse(readBuffer)
 		if err != nil {
 			return fmt.Errorf("can't parse accepted data: %w", err)
 		}
@@ -100,7 +100,7 @@ func handleConnection(
 			} else if strings.ToUpper(command[0]) == "ECHO" {
 				_, _ = connection.Write(readBuffer[14:n])
 			} else if strings.ToUpper(command[0]) == "SET" {
-				Propagate([]net.Conn{}, encoder.EncodeArray(command))
+				Propagate([]net.Conn{}, codec.EncodeArray(command))
 				msg, err := st.Set(command)
 				if err != nil {
 				}
@@ -115,13 +115,13 @@ func handleConnection(
 			} else if strings.ToUpper(command[0]) == "CONFIG" {
 				if strings.ToUpper(command[1]) == "GET" {
 					if strings.ToUpper(command[2]) == "DIR" {
-						_, _ = connection.Write(encoder.EncodeArray([]string{"dir", cfg.RdbDir}))
+						_, _ = connection.Write(codec.EncodeArray([]string{"dir", cfg.RdbDir}))
 					} else if strings.ToUpper(command[2]) == "DBFILENAME" {
-						_, _ = connection.Write([]byte(encoder.EncodeArray([]string{"dbfilename", cfg.RdbFilename})))
+						_, _ = connection.Write([]byte(codec.EncodeArray([]string{"dbfilename", cfg.RdbFilename})))
 					}
 				}
 			} else if strings.ToUpper(command[0]) == "INFO" {
-				_, _ = connection.Write(encoder.EncodeString(cfg.GetInfo()))
+				_, _ = connection.Write(codec.EncodeString(cfg.GetInfo()))
 			} else if strings.ToUpper(command[0]) == "KEYS" {
 				if command[1] != "*" {
 					return fmt.Errorf("KEYS command not fully implemented")
@@ -172,7 +172,7 @@ func sendRdbFile(connection net.Conn) error {
 }
 
 func Ping(conn net.Conn) {
-	_, _ = conn.Write(encoder.EncodeArray([]string{"PING"}))
+	_, _ = conn.Write(codec.EncodeArray([]string{"PING"}))
 }
 
 func Handshake(cfg config.RedisConfig, st *storage.Storage) error {
@@ -217,13 +217,13 @@ func GetMasterConnection(cfg config.RedisConfig) (net.Conn, error) {
 }
 
 func ReplconfPort(cfg config.RedisConfig, conn net.Conn) {
-	_, _ = conn.Write([]byte(encoder.EncodeArray([]string{"REPLCONF", "listening-port", cfg.Port})))
+	_, _ = conn.Write([]byte(codec.EncodeArray([]string{"REPLCONF", "listening-port", cfg.Port})))
 }
 
 func ReplconfCapa(conn net.Conn) {
-	_, _ = conn.Write([]byte(encoder.EncodeArray([]string{"REPLCONF", "capa", "psync2"})))
+	_, _ = conn.Write([]byte(codec.EncodeArray([]string{"REPLCONF", "capa", "psync2"})))
 }
 
 func Psync(conn net.Conn) {
-	_, _ = conn.Write([]byte(encoder.EncodeArray([]string{"PSYNC", "?", "-1"})))
+	_, _ = conn.Write([]byte(codec.EncodeArray([]string{"PSYNC", "?", "-1"})))
 }

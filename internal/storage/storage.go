@@ -7,8 +7,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/codecrafters-io/redis-starter-go/internal/codec"
 	"github.com/codecrafters-io/redis-starter-go/internal/config"
-	"github.com/codecrafters-io/redis-starter-go/internal/encoder"
 )
 
 type NowAndDuration struct {
@@ -91,7 +91,7 @@ func (st *Storage) Keys(parsedData []string, pattern string) []byte {
 	header := fmt.Sprintf("*%v\r\n", len(keys))
 	sb.WriteString(header)
 	for _, key := range keys {
-		_, _ = sb.Write(encoder.EncodeString(key))
+		_, _ = sb.Write(codec.EncodeString(key))
 	}
 	return []byte(sb.String())
 }
