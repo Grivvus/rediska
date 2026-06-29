@@ -11,12 +11,11 @@ func EncodeString(s string) []byte {
 
 func EncodeArray(data []string) []byte {
 	b := strings.Builder{}
-	b.WriteString(fmt.Sprintf("*%v\r\n", len(data)))
+	fmt.Fprintf(&b, "*%v\r\n", len(data))
 	for _, s := range data {
-		b.WriteString(fmt.Sprintf("$%v\r\n", len(s)))
+		fmt.Fprintf(&b, "$%v\r\n", len(s))
 		b.WriteString(s)
 		b.WriteString("\r\n")
 	}
-	fmt.Println("encoded:", b.String())
 	return []byte(b.String())
 }
