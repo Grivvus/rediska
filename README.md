@@ -8,7 +8,7 @@ go run ./cmd/rediska/main.go
 ```
 
 ```bash
-# from other terminal you can run cli redis client
+# from other terminal you can run redis-cli client
 redis-cli SET 321 abacaba  # output: OK
 redis-cli GET 321  # output: abacaba
 ```
