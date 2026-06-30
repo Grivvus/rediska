@@ -36,7 +36,12 @@ func main() {
 			fmt.Println(masterHost, masterPort)
 			cfg.MasterHost = masterHost
 			cfg.MasterPort = masterPort
-			go Handshake(*cfg, st)
+			go func() {
+				err := Handshake(*cfg, st)
+				if err != nil {
+					slog.Error("error during handshake", "err", err)
+				}
+			}()
 		}
 	}
 
@@ -45,7 +50,11 @@ func main() {
 		// LoadSave(cfg.RdbDir+"/", cfg.RdbFilename)
 	}
 
-	listen(*cfg, st)
+	err := listen(*cfg, st)
+	if err != nil {
+		slog.Error(err.Error())
+		os.Exit(1)
+	}
 }
 
 func listen(cfg config.RedisConfig, st *storage.Storage) error {
@@ -62,7 +71,12 @@ func listen(cfg config.RedisConfig, st *storage.Storage) error {
 		if err != nil {
 			return fmt.Errorf("can't accept connection: %w", err)
 		}
-		go handleConnection(cfg, connection, st, []net.Conn{})
+		go func() {
+			err := handleConnection(cfg, connection, st, []net.Conn{})
+			if err != nil {
+				slog.Error("error during handleConnection", "err", err)
+			}
+		}()
 	}
 }
 
@@ -103,6 +117,7 @@ func handleConnection(
 				Propagate([]net.Conn{}, codec.EncodeArray(command))
 				msg, err := st.Set(command)
 				if err != nil {
+					return fmt.Errorf("error appeared during SET command: %w", err)
 				}
 				if msg != nil {
 					_, _ = connection.Write(msg)
@@ -139,7 +154,10 @@ func handleConnection(
 				const masterID = "8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb"
 				retStr := fmt.Sprintf("+FULLRESYNC %s 0\r\n", masterID)
 				_, _ = connection.Write([]byte(retStr))
-				sendRdbFile(connection)
+				err := sendRdbFile(connection)
+				if err != nil {
+					return fmt.Errorf("error appeared during PSYNC: %w", err)
+				}
 			}
 		}
 	}
@@ -164,7 +182,7 @@ func sendRdbFile(connection net.Conn) error {
 		return fmt.Errorf("can't read rdb file: %w", err)
 	}
 	length := len(file)
-	_, err = connection.Write([]byte(fmt.Sprintf("$%d\r\n%s", length, file)))
+	_, err = fmt.Fprintf(connection, "$%d\r\n%s", length, file)
 	if err != nil {
 		return fmt.Errorf("can't write rdb file to replica connection: %w", err)
 	}
@@ -204,7 +222,12 @@ func Handshake(cfg config.RedisConfig, st *storage.Storage) error {
 	if err != nil {
 		return fmt.Errorf("can't read from master: %w", err)
 	}
-	go handleConnection(cfg, conn, st, []net.Conn{})
+	go func() {
+		err := handleConnection(cfg, conn, st, []net.Conn{})
+		if err != nil {
+			slog.Error("error appeared during handleConnection: %w", "err", err)
+		}
+	}()
 	return nil
 }
 

@@ -35,7 +35,7 @@ func (st *Storage) Set(parsedData []string) (msg []byte, err error) {
 		defer st.timeMu.Unlock()
 		parsed, err := strconv.Atoi(parsedData[4])
 		if err != nil {
-			return nil, fmt.Errorf("Invalid data for time delay\n Can't parse %v to int\n", parsedData[4])
+			return nil, fmt.Errorf("invalid data for time delay\n Can't parse %v to int", parsedData[4])
 		}
 		st.timestamps[parsedData[1]] = time.Now().Add(time.Duration(parsed) * time.Millisecond)
 	}
