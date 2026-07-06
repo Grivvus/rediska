@@ -3,6 +3,8 @@ package config
 import (
 	"fmt"
 	"math/rand/v2"
+
+	"github.com/codecrafters-io/redis-starter-go/internal/flags"
 )
 
 type RoleType int
@@ -41,6 +43,27 @@ func Default() *RedisConfig {
 		Role:         MasterRole,
 		MasterReplid: generateReplid(),
 	}
+}
+
+func (r *RedisConfig) WithFlags(f flags.ParseResult) *RedisConfig {
+	if f.Master != nil {
+		r.Role = ReplicaRole
+		r.MasterHost = f.Master.Host
+		r.MasterPort = f.Master.Port
+	}
+	if f.Port != r.Port {
+		r.Port = f.Port
+	}
+
+	if f.RdbDir != "" {
+		r.RdbDir = f.RdbDir
+	}
+
+	if f.RdbFilename != "" {
+		r.RdbFilename = f.RdbFilename
+	}
+
+	return r
 }
 
 func (r RedisConfig) GetInfo() string {

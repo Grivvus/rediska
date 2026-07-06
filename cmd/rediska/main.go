@@ -13,6 +13,7 @@ import (
 
 	"github.com/codecrafters-io/redis-starter-go/internal/codec"
 	"github.com/codecrafters-io/redis-starter-go/internal/config"
+	"github.com/codecrafters-io/redis-starter-go/internal/flags"
 	"github.com/codecrafters-io/redis-starter-go/internal/storage"
 )
 
@@ -24,38 +25,24 @@ func main() {
 	defer cancel()
 
 	slog.Info("Rediska startup")
+	providedFlags := flags.Parse()
+
 	cfg := config.Default()
+	cfg.WithFlags(providedFlags)
+
 	st := storage.NewStorage(*cfg)
-	args := os.Args
-	for i, arg := range args {
-		if arg == "--dir" {
-			cfg.RdbDir = args[i+1]
-		}
-		if arg == "--dbfilename" {
-			cfg.RdbFilename = args[i+1]
-		}
-		if arg == "--port" {
-			cfg.Port = args[i+1]
-		}
-		if arg == "--replicaof" {
-			cfg.Role = config.ReplicaRole
-			hostPort := strings.Split(args[i+1], " ")
-			masterHost := hostPort[0]
-			masterPort := hostPort[1]
-			slog.Info("", "master host", masterHost, "master port", masterPort)
-			cfg.MasterHost = masterHost
-			cfg.MasterPort = masterPort
-			go func() {
-				err := Handshake(ctx, *cfg, st)
-				if err != nil {
-					slog.Error("error during handshake", "err", err)
-				}
-			}()
-		}
+
+	if cfg.Role == config.ReplicaRole {
+		go func() {
+			err := Handshake(ctx, *cfg, st)
+			if err != nil {
+				slog.Error("error during handshake", "err", err)
+			}
+		}()
 	}
 
 	if cfg.RdbDir != "" || cfg.RdbFilename != "" {
-		slog.Warn("can't load config save from file")
+		slog.Warn("can't load config save from file", "cause", "not implemented")
 		// LoadSave(cfg.RdbDir+"/", cfg.RdbFilename)
 	}
 
@@ -108,78 +95,107 @@ func handleConnection(
 			if n == 0 {
 				break
 			}
-			// can't accept the connection;
-			// can't return useful error to the user
 			if err != nil {
-				slog.Error("error accepting connection", "err", err)
-				return
+				slog.Error("error while reading from the connection", "err", err)
+				continue
 			}
 			slog.Info("", "bytes recieved", n, "conn", connection)
 			parsedData, err := codec.Parse(readBuffer)
 			if err != nil {
 				connection.Write(codec.EncodeError(fmt.Errorf("can't parse accepted data: %w", err)))
-				return
-			}
-			if len(parsedData) == 0 {
 				continue
 			}
 			for _, command := range parsedData {
 				if strings.ToUpper(command[0]) == "PING" {
-					_, _ = connection.Write([]byte("+PONG\r\n"))
+					handlePing(connection, command)
 				} else if strings.ToUpper(command[0]) == "ECHO" {
-					_, _ = connection.Write(readBuffer[14:n])
+					handleEcho(connection, command)
 				} else if strings.ToUpper(command[0]) == "SET" {
-					Propagate([]net.Conn{}, codec.EncodeArray(command))
-					msg, err := st.Set(command)
-					if err != nil {
-						msg := codec.EncodeError(fmt.Errorf("error appeared during SET command: %w", err))
-						_, _ = connection.Write(msg)
-						continue
-					}
-					if msg != nil {
-						_, _ = connection.Write(msg)
-					}
+					handleSet(connection, command, st)
 				} else if strings.ToUpper(command[0]) == "GET" {
-					msg := st.Get(command)
-					if msg != nil {
-						_, _ = connection.Write(msg)
-					}
+					handleGet(connection, command, st)
 				} else if strings.ToUpper(command[0]) == "CONFIG" {
-					if strings.ToUpper(command[1]) == "GET" {
-						if strings.ToUpper(command[2]) == "DIR" {
-							_, _ = connection.Write(codec.EncodeArray([]string{"dir", cfg.RdbDir}))
-						} else if strings.ToUpper(command[2]) == "DBFILENAME" {
-							_, _ = connection.Write([]byte(codec.EncodeArray([]string{"dbfilename", cfg.RdbFilename})))
-						}
-					}
+					handleConfig(connection, command, cfg)
 				} else if strings.ToUpper(command[0]) == "INFO" {
 					_, _ = connection.Write(codec.EncodeString(cfg.GetInfo()))
 				} else if strings.ToUpper(command[0]) == "KEYS" {
-					if command[1] != "*" {
-						connection.Write(codec.EncodeError(fmt.Errorf("KEYS command not fully implemented")))
-						continue
-					}
-					st.Keys(command, command[1])
+					handleKeys(connection, command, st)
 				} else if strings.ToUpper(command[0]) == "SAVE" {
+					_, _ = connection.Write(codec.EncodeError(fmt.Errorf("SAVE command is not implemented yet")))
 				} else if strings.ToUpper(command[0]) == "REPLCONF" {
-					const retStr = "+OK\r\n"
-					if command[1] == "listening-port" {
-						knownReplicas = append(knownReplicas, connection)
-						needed = true
-					}
-					_, _ = connection.Write([]byte(retStr))
+					replconfHandle(connection, command, knownReplicas, &needed)
 				} else if strings.ToUpper(command[0]) == "PSYNC" {
-					const masterID = "8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb"
-					retStr := fmt.Sprintf("+FULLRESYNC %s 0\r\n", masterID)
-					_, _ = connection.Write([]byte(retStr))
-					err := sendRdbFile(connection)
-					if err != nil {
-						connection.Write(codec.EncodeError(fmt.Errorf("error appeared during PSYNC: %w", err)))
-						continue
-					}
+					psyncHandle(connection, command)
 				}
 			}
 		}
+	}
+}
+
+func handlePing(conn net.Conn, command []string) {
+	_ = command
+	_, _ = conn.Write([]byte("+PONG\r\n"))
+}
+
+func handleEcho(conn net.Conn, command []string) {
+	_, _ = conn.Write(codec.EncodeArray(command[1:]))
+}
+
+func handleGet(conn net.Conn, command []string, st *storage.Storage) {
+	msg := st.Get(command)
+	if msg != nil {
+		_, _ = conn.Write(msg)
+	}
+}
+
+func handleSet(conn net.Conn, command []string, st *storage.Storage) {
+	Propagate([]net.Conn{}, codec.EncodeArray(command))
+	msg, err := st.Set(command)
+	if err != nil {
+		msg := codec.EncodeError(fmt.Errorf("error appeared during SET command: %w", err))
+		_, _ = conn.Write(msg)
+		return
+	}
+	if msg != nil {
+		_, _ = conn.Write(msg)
+	}
+}
+
+func handleConfig(conn net.Conn, command []string, cfg config.RedisConfig) {
+	if strings.ToUpper(command[1]) == "GET" {
+		if strings.ToUpper(command[2]) == "DIR" {
+			_, _ = conn.Write(codec.EncodeArray([]string{"dir", cfg.RdbDir}))
+		} else if strings.ToUpper(command[2]) == "DBFILENAME" {
+			_, _ = conn.Write([]byte(codec.EncodeArray([]string{"dbfilename", cfg.RdbFilename})))
+		}
+	}
+}
+
+func handleKeys(conn net.Conn, command []string, st *storage.Storage) {
+	if command[1] != "*" {
+		conn.Write(codec.EncodeError(fmt.Errorf("KEYS command not fully implemented")))
+		return
+	}
+	st.Keys(command, command[1])
+}
+
+func replconfHandle(conn net.Conn, command []string, knownReplicas []net.Conn, neededFlag *bool) {
+	const retStr = "+OK\r\n"
+	if command[1] == "listening-port" {
+		knownReplicas = append(knownReplicas, conn)
+		*neededFlag = true
+	}
+	_, _ = conn.Write([]byte(retStr))
+}
+
+func psyncHandle(conn net.Conn, command []string) {
+	_ = command
+	const masterID = "8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb"
+	retStr := fmt.Sprintf("+FULLRESYNC %s 0\r\n", masterID)
+	_, _ = conn.Write([]byte(retStr))
+	err := sendRdbFile(conn)
+	if err != nil {
+		conn.Write(codec.EncodeError(fmt.Errorf("error appeared during PSYNC: %w", err)))
 	}
 }
 
