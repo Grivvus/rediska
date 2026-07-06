@@ -28,9 +28,13 @@ func NewStorage(cfg config.RedisConfig) *Storage {
 }
 
 func (st *Storage) Set(parsedData []string) (msg []byte, err error) {
+	if len(parsedData) < 3 {
+		return nil, fmt.Errorf("wrong number of arguments passed to SET command")
+	}
 	st.storageMu.Lock()
 	defer st.storageMu.Unlock()
-	if len(parsedData) > 3 && parsedData[3] == "px" {
+	fmt.Println("parsedData", parsedData)
+	if len(parsedData) >= 5 && parsedData[3] == "px" {
 		st.timeMu.Lock()
 		defer st.timeMu.Unlock()
 		parsed, err := strconv.Atoi(parsedData[4])
@@ -43,6 +47,7 @@ func (st *Storage) Set(parsedData []string) (msg []byte, err error) {
 	if st.cfg.Role == config.MasterRole {
 		return []byte("+OK\r\n"), nil
 	}
+	// slave returns nothing
 	return nil, nil
 }
 

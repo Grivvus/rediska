@@ -1,12 +1,15 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"log/slog"
 	"net"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 
 	"github.com/codecrafters-io/redis-starter-go/internal/codec"
 	"github.com/codecrafters-io/redis-starter-go/internal/config"
@@ -14,7 +17,13 @@ import (
 )
 
 func main() {
-	fmt.Println("Rediska startup")
+	ctx, cancel := signal.NotifyContext(
+		context.Background(),
+		os.Interrupt, os.Kill, syscall.SIGTERM,
+	)
+	defer cancel()
+
+	slog.Info("Rediska startup")
 	cfg := config.Default()
 	st := storage.NewStorage(*cfg)
 	args := os.Args
@@ -33,11 +42,11 @@ func main() {
 			hostPort := strings.Split(args[i+1], " ")
 			masterHost := hostPort[0]
 			masterPort := hostPort[1]
-			fmt.Println(masterHost, masterPort)
+			slog.Info("", "master host", masterHost, "master port", masterPort)
 			cfg.MasterHost = masterHost
 			cfg.MasterPort = masterPort
 			go func() {
-				err := Handshake(*cfg, st)
+				err := Handshake(ctx, *cfg, st)
 				if err != nil {
 					slog.Error("error during handshake", "err", err)
 				}
@@ -50,14 +59,16 @@ func main() {
 		// LoadSave(cfg.RdbDir+"/", cfg.RdbFilename)
 	}
 
-	err := listen(*cfg, st)
+	err := listen(ctx, *cfg, st)
 	if err != nil {
 		slog.Error(err.Error())
-		os.Exit(1)
+		return
 	}
 }
 
-func listen(cfg config.RedisConfig, st *storage.Storage) error {
+func listen(
+	ctx context.Context, cfg config.RedisConfig, st *storage.Storage,
+) error {
 	listner, err := net.Listen("tcp", "0.0.0.0:"+cfg.Port)
 	if err != nil {
 		return fmt.Errorf("failed to bind to port %v: %w", cfg.Port, err)
@@ -72,18 +83,15 @@ func listen(cfg config.RedisConfig, st *storage.Storage) error {
 			return fmt.Errorf("can't accept connection: %w", err)
 		}
 		go func() {
-			err := handleConnection(cfg, connection, st, []net.Conn{})
-			if err != nil {
-				slog.Error("error during handleConnection", "err", err)
-			}
+			handleConnection(ctx, cfg, connection, st, []net.Conn{})
 		}()
 	}
 }
 
 func handleConnection(
-	cfg config.RedisConfig, connection net.Conn,
+	ctx context.Context, cfg config.RedisConfig, connection net.Conn,
 	st *storage.Storage, knownReplicas []net.Conn,
-) error {
+) {
 	needed := false
 	defer func() {
 		if !needed {
@@ -92,77 +100,87 @@ func handleConnection(
 	}()
 	readBuffer := make([]byte, 1024)
 	for {
-		n, err := connection.Read(readBuffer)
-		if n == 0 {
-			break
-		}
-		if err != nil {
-			return fmt.Errorf("error accepting connection: %w", err)
-		}
-		log.Printf("%v bytes recieved\n", n)
-		parsedData, err := codec.Parse(readBuffer)
-		if err != nil {
-			return fmt.Errorf("can't parse accepted data: %w", err)
-		}
-		fmt.Println(parsedData)
-		if len(parsedData) == 0 {
-			continue
-		}
-		for _, command := range parsedData {
-			if strings.ToUpper(command[0]) == "PING" {
-				_, _ = connection.Write([]byte("+PONG\r\n"))
-			} else if strings.ToUpper(command[0]) == "ECHO" {
-				_, _ = connection.Write(readBuffer[14:n])
-			} else if strings.ToUpper(command[0]) == "SET" {
-				Propagate([]net.Conn{}, codec.EncodeArray(command))
-				msg, err := st.Set(command)
-				if err != nil {
-					return fmt.Errorf("error appeared during SET command: %w", err)
-				}
-				if msg != nil {
-					_, _ = connection.Write(msg)
-				}
-			} else if strings.ToUpper(command[0]) == "GET" {
-				msg := st.Get(command)
-				if msg != nil {
-					_, _ = connection.Write(msg)
-				}
-			} else if strings.ToUpper(command[0]) == "CONFIG" {
-				if strings.ToUpper(command[1]) == "GET" {
-					if strings.ToUpper(command[2]) == "DIR" {
-						_, _ = connection.Write(codec.EncodeArray([]string{"dir", cfg.RdbDir}))
-					} else if strings.ToUpper(command[2]) == "DBFILENAME" {
-						_, _ = connection.Write([]byte(codec.EncodeArray([]string{"dbfilename", cfg.RdbFilename})))
+		select {
+		case <-ctx.Done():
+			return
+		default:
+			n, err := connection.Read(readBuffer)
+			if n == 0 {
+				break
+			}
+			// can't accept the connection;
+			// can't return useful error to the user
+			if err != nil {
+				slog.Error("error accepting connection", "err", err)
+				return
+			}
+			slog.Info("", "bytes recieved", n, "conn", connection)
+			parsedData, err := codec.Parse(readBuffer)
+			if err != nil {
+				connection.Write(codec.EncodeError(fmt.Errorf("can't parse accepted data: %w", err)))
+				return
+			}
+			if len(parsedData) == 0 {
+				continue
+			}
+			for _, command := range parsedData {
+				if strings.ToUpper(command[0]) == "PING" {
+					_, _ = connection.Write([]byte("+PONG\r\n"))
+				} else if strings.ToUpper(command[0]) == "ECHO" {
+					_, _ = connection.Write(readBuffer[14:n])
+				} else if strings.ToUpper(command[0]) == "SET" {
+					Propagate([]net.Conn{}, codec.EncodeArray(command))
+					msg, err := st.Set(command)
+					if err != nil {
+						msg := codec.EncodeError(fmt.Errorf("error appeared during SET command: %w", err))
+						_, _ = connection.Write(msg)
+						continue
 					}
-				}
-			} else if strings.ToUpper(command[0]) == "INFO" {
-				_, _ = connection.Write(codec.EncodeString(cfg.GetInfo()))
-			} else if strings.ToUpper(command[0]) == "KEYS" {
-				if command[1] != "*" {
-					return fmt.Errorf("KEYS command not fully implemented")
-				}
-				st.Keys(command, command[1])
-			} else if strings.ToUpper(command[0]) == "SAVE" {
-			} else if strings.ToUpper(command[0]) == "REPLCONF" {
-				const retStr = "+OK\r\n"
-				if command[1] == "listening-port" {
-					knownReplicas = append(knownReplicas, connection)
-					needed = true
-				}
-				_, _ = connection.Write([]byte(retStr))
-			} else if strings.ToUpper(command[0]) == "PSYNC" {
-				const masterID = "8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb"
-				retStr := fmt.Sprintf("+FULLRESYNC %s 0\r\n", masterID)
-				_, _ = connection.Write([]byte(retStr))
-				err := sendRdbFile(connection)
-				if err != nil {
-					return fmt.Errorf("error appeared during PSYNC: %w", err)
+					if msg != nil {
+						_, _ = connection.Write(msg)
+					}
+				} else if strings.ToUpper(command[0]) == "GET" {
+					msg := st.Get(command)
+					if msg != nil {
+						_, _ = connection.Write(msg)
+					}
+				} else if strings.ToUpper(command[0]) == "CONFIG" {
+					if strings.ToUpper(command[1]) == "GET" {
+						if strings.ToUpper(command[2]) == "DIR" {
+							_, _ = connection.Write(codec.EncodeArray([]string{"dir", cfg.RdbDir}))
+						} else if strings.ToUpper(command[2]) == "DBFILENAME" {
+							_, _ = connection.Write([]byte(codec.EncodeArray([]string{"dbfilename", cfg.RdbFilename})))
+						}
+					}
+				} else if strings.ToUpper(command[0]) == "INFO" {
+					_, _ = connection.Write(codec.EncodeString(cfg.GetInfo()))
+				} else if strings.ToUpper(command[0]) == "KEYS" {
+					if command[1] != "*" {
+						connection.Write(codec.EncodeError(fmt.Errorf("KEYS command not fully implemented")))
+						continue
+					}
+					st.Keys(command, command[1])
+				} else if strings.ToUpper(command[0]) == "SAVE" {
+				} else if strings.ToUpper(command[0]) == "REPLCONF" {
+					const retStr = "+OK\r\n"
+					if command[1] == "listening-port" {
+						knownReplicas = append(knownReplicas, connection)
+						needed = true
+					}
+					_, _ = connection.Write([]byte(retStr))
+				} else if strings.ToUpper(command[0]) == "PSYNC" {
+					const masterID = "8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb"
+					retStr := fmt.Sprintf("+FULLRESYNC %s 0\r\n", masterID)
+					_, _ = connection.Write([]byte(retStr))
+					err := sendRdbFile(connection)
+					if err != nil {
+						connection.Write(codec.EncodeError(fmt.Errorf("error appeared during PSYNC: %w", err)))
+						continue
+					}
 				}
 			}
 		}
 	}
-
-	return nil
 }
 
 func Propagate(knownReplicas []net.Conn, data []byte) {
@@ -193,7 +211,9 @@ func Ping(conn net.Conn) {
 	_, _ = conn.Write(codec.EncodeArray([]string{"PING"}))
 }
 
-func Handshake(cfg config.RedisConfig, st *storage.Storage) error {
+func Handshake(
+	ctx context.Context, cfg config.RedisConfig, st *storage.Storage,
+) error {
 	conn, err := GetMasterConnection(cfg)
 	if err != nil {
 		return err
@@ -223,10 +243,7 @@ func Handshake(cfg config.RedisConfig, st *storage.Storage) error {
 		return fmt.Errorf("can't read from master: %w", err)
 	}
 	go func() {
-		err := handleConnection(cfg, conn, st, []net.Conn{})
-		if err != nil {
-			slog.Error("error appeared during handleConnection: %w", "err", err)
-		}
+		handleConnection(ctx, cfg, conn, st, []net.Conn{})
 	}()
 	return nil
 }

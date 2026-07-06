@@ -18,3 +18,7 @@ func EncodeArray(data []string) []byte {
 	}
 	return []byte(b.String())
 }
+
+func EncodeError(err error) []byte {
+	return EncodeString("(error) " + err.Error())
+}
