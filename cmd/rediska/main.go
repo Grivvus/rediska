@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"log"
 	"log/slog"
 	"net"
@@ -51,6 +53,8 @@ func main() {
 		slog.Error(err.Error())
 		return
 	}
+	<-ctx.Done()
+	log.Println("rediska shutdown")
 }
 
 func listen(
@@ -60,14 +64,24 @@ func listen(
 	if err != nil {
 		return fmt.Errorf("failed to bind to port %v: %w", cfg.Port, err)
 	}
-	defer func() {
+	// listener.Accept is blocking function
+	// so to shutdown on Sigint we must launch another goroutine
+	// that will be waiting ctx.Done
+	go func() {
+		<-ctx.Done()
+
 		slog.Info("Close listner", "host", "0.0.0.0", "port", cfg.Port)
 		_ = listner.Close()
 	}()
+
 	for {
 		connection, err := listner.Accept()
 		if err != nil {
-			return fmt.Errorf("can't accept connection: %w", err)
+			if ctx.Err() != nil {
+				return nil
+			}
+			slog.Error("", "err", fmt.Errorf("can't accept connection: %w", err))
+			return err
 		}
 		go func() {
 			handleConnection(ctx, cfg, connection, st, []net.Conn{})
@@ -92,12 +106,20 @@ func handleConnection(
 			return
 		default:
 			n, err := connection.Read(readBuffer)
-			if n == 0 {
-				break
-			}
-			if err != nil {
+			if err != nil && !errors.Is(err, io.EOF) {
 				slog.Error("error while reading from the connection", "err", err)
 				continue
+			} else if errors.Is(err, io.EOF) || n == 0 {
+				return
+			}
+			if n == len(readBuffer) {
+				slog.Error("can't fit message into buffer", "len buffer", len(readBuffer))
+				connection.Write(codec.EncodeError(fmt.Errorf("message is too long")))
+				// return because now in connection lays some garbage
+				// that we couldn't fit into buffer
+				// so we could close the connection or read full message
+				// and then start processing next one
+				return
 			}
 			slog.Info("", "bytes recieved", n, "conn", connection)
 			parsedData, err := codec.Parse(readBuffer)
