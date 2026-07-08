@@ -114,7 +114,7 @@ func handleConnection(
 			}
 			if n == len(readBuffer) {
 				slog.Error("can't fit message into buffer", "len buffer", len(readBuffer))
-				connection.Write(codec.EncodeError(fmt.Errorf("message is too long")))
+				_, _ = connection.Write(codec.EncodeError(fmt.Errorf("message is too long")))
 				// return because now in connection lays some garbage
 				// that we couldn't fit into buffer
 				// so we could close the connection or read full message
@@ -124,7 +124,7 @@ func handleConnection(
 			slog.Info("", "bytes recieved", n, "conn", connection)
 			parsedData, err := codec.Parse(readBuffer)
 			if err != nil {
-				connection.Write(codec.EncodeError(fmt.Errorf("can't parse accepted data: %w", err)))
+				_, _ = connection.Write(codec.EncodeError(fmt.Errorf("can't parse accepted data: %w", err)))
 				continue
 			}
 			for _, command := range parsedData {
@@ -145,7 +145,7 @@ func handleConnection(
 				} else if strings.ToUpper(command[0]) == "SAVE" {
 					_, _ = connection.Write(codec.EncodeError(fmt.Errorf("SAVE command is not implemented yet")))
 				} else if strings.ToUpper(command[0]) == "REPLCONF" {
-					replconfHandle(connection, command, knownReplicas, &needed)
+					replconfHandle(connection, command, &knownReplicas, &needed)
 				} else if strings.ToUpper(command[0]) == "PSYNC" {
 					psyncHandle(connection, command)
 				}
@@ -195,16 +195,16 @@ func handleConfig(conn net.Conn, command []string, cfg config.RedisConfig) {
 
 func handleKeys(conn net.Conn, command []string, st *storage.Storage) {
 	if command[1] != "*" {
-		conn.Write(codec.EncodeError(fmt.Errorf("KEYS command not fully implemented")))
+		_, _ = conn.Write(codec.EncodeError(fmt.Errorf("KEYS command not fully implemented")))
 		return
 	}
 	st.Keys(command, command[1])
 }
 
-func replconfHandle(conn net.Conn, command []string, knownReplicas []net.Conn, neededFlag *bool) {
+func replconfHandle(conn net.Conn, command []string, knownReplicas *[]net.Conn, neededFlag *bool) {
 	const retStr = "+OK\r\n"
 	if command[1] == "listening-port" {
-		knownReplicas = append(knownReplicas, conn)
+		*knownReplicas = append(*knownReplicas, conn)
 		*neededFlag = true
 	}
 	_, _ = conn.Write([]byte(retStr))
@@ -217,7 +217,7 @@ func psyncHandle(conn net.Conn, command []string) {
 	_, _ = conn.Write([]byte(retStr))
 	err := sendRdbFile(conn)
 	if err != nil {
-		conn.Write(codec.EncodeError(fmt.Errorf("error appeared during PSYNC: %w", err)))
+		_, _ = conn.Write(codec.EncodeError(fmt.Errorf("error appeared during PSYNC: %w", err)))
 	}
 }
 

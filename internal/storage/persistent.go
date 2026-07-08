@@ -136,6 +136,7 @@ func DecodeRDB(r io.Reader) (rdbStructure, error) {
 	raw = raw[i+2:]
 	if raw[i] == 'F' && raw[i+1] == 'B' {
 		// parse resizedb fields
+		return rdbStructure{}, fmt.Errorf("not implemented")
 	}
 	for len(raw) > 0 && (raw[0] != 'F' && raw[1] != 'F') {
 		shift, key, value, timestamp, err := parseKeyValuePair(raw)
