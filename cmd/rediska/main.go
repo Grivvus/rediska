@@ -10,8 +10,10 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/codecrafters-io/redis-starter-go/internal/codec"
 	"github.com/codecrafters-io/redis-starter-go/internal/config"
@@ -44,8 +46,17 @@ func main() {
 	}
 
 	if cfg.RdbDir != "" || cfg.RdbFilename != "" {
-		slog.Warn("can't load config save from file", "cause", "not implemented")
-		// LoadSave(cfg.RdbDir+"/", cfg.RdbFilename)
+		f, err := os.Open(cfg.RdbDir + cfg.RdbFilename)
+		if err != nil {
+			slog.Error("can't open rdb file", "err", err)
+			return
+		}
+		rdb, err := storage.DecodeRDB(f)
+		if err != nil {
+			slog.Error("can't parse rdb file", "err", err)
+			return
+		}
+		rdb.Apply(st)
 	}
 
 	err := listen(ctx, *cfg, st)
@@ -139,7 +150,7 @@ func handleConnection(
 				} else if strings.ToUpper(command[0]) == "CONFIG" {
 					handleConfig(connection, command, cfg)
 				} else if strings.ToUpper(command[0]) == "INFO" {
-					_, _ = connection.Write(codec.EncodeString(cfg.GetInfo()))
+					_, _ = connection.Write(codec.EncodeBulkString(cfg.GetInfo()))
 				} else if strings.ToUpper(command[0]) == "KEYS" {
 					handleKeys(connection, command, st)
 				} else if strings.ToUpper(command[0]) == "SAVE" {
@@ -156,7 +167,7 @@ func handleConnection(
 
 func handlePing(conn net.Conn, command []string) {
 	_ = command
-	_, _ = conn.Write([]byte("+PONG\r\n"))
+	_, _ = conn.Write(codec.EncodeSimpleString("PONG"))
 }
 
 func handleEcho(conn net.Conn, command []string) {
@@ -164,23 +175,58 @@ func handleEcho(conn net.Conn, command []string) {
 }
 
 func handleGet(conn net.Conn, command []string, st *storage.Storage) {
-	msg := st.Get(command)
-	if msg != nil {
-		_, _ = conn.Write(msg)
+	msg, err := st.Get(command[1])
+	// expired or no value
+	if err != nil {
+		_, _ = conn.Write(codec.NullBulkString())
+		return
 	}
+	_, _ = conn.Write(codec.EncodeBulkString(msg))
 }
 
 func handleSet(conn net.Conn, command []string, st *storage.Storage) {
-	Propagate([]net.Conn{}, codec.EncodeArray(command))
-	msg, err := st.Set(command)
+	err := Propagate([]net.Conn{}, codec.EncodeArray(command))
 	if err != nil {
-		msg := codec.EncodeError(fmt.Errorf("error appeared during SET command: %w", err))
-		_, _ = conn.Write(msg)
+		slog.Error("can't propagate SET command", "err", err)
+	}
+	if len(command) != 3 && len(command) != 5 {
+		_, _ = conn.Write(codec.EncodeError(fmt.Errorf(
+			`unexpected number of arguments,
+			exepcted 3 for value without timestamp and 5 for value with timestamp,
+			but got %v`,
+			len(command),
+		)))
+	}
+	// without timestamp
+	if len(command) == 3 {
+		st.Set(command[1], command[2])
 		return
 	}
-	if msg != nil {
-		_, _ = conn.Write(msg)
+	// with timestamp
+	exp, err := parseExpiration(command)
+	if err != nil {
+		_, _ = conn.Write(codec.EncodeError(err))
+		return
 	}
+	st.SetWithExpiry(command[1], command[2], exp)
+}
+
+func parseExpiration(command []string) (time.Time, error) {
+	if command[3] != "px" {
+		return time.Time{}, fmt.Errorf(
+			"unexpected message format, expect 'px' for timestamp, got '%v'",
+			command[3],
+		)
+	}
+	parsed, err := strconv.Atoi(command[4])
+	if err != nil {
+		return time.Time{}, fmt.Errorf(
+			"invalid data for time delay\n Can't parse %v to int",
+			command[4],
+		)
+	}
+	exp := time.Now().Add(time.Duration(parsed) * time.Millisecond)
+	return exp, nil
 }
 
 func handleConfig(conn net.Conn, command []string, cfg config.RedisConfig) {
@@ -188,7 +234,9 @@ func handleConfig(conn net.Conn, command []string, cfg config.RedisConfig) {
 		if strings.ToUpper(command[2]) == "DIR" {
 			_, _ = conn.Write(codec.EncodeArray([]string{"dir", cfg.RdbDir}))
 		} else if strings.ToUpper(command[2]) == "DBFILENAME" {
-			_, _ = conn.Write([]byte(codec.EncodeArray([]string{"dbfilename", cfg.RdbFilename})))
+			_, _ = conn.Write([]byte(codec.EncodeArray(
+				[]string{"dbfilename", cfg.RdbFilename},
+			)))
 		}
 	}
 }
@@ -198,38 +246,41 @@ func handleKeys(conn net.Conn, command []string, st *storage.Storage) {
 		_, _ = conn.Write(codec.EncodeError(fmt.Errorf("KEYS command not fully implemented")))
 		return
 	}
-	st.Keys(command, command[1])
+	keys := st.Keys(command, command[1])
+	_, _ = conn.Write(codec.EncodeArray(keys))
 }
 
 func replconfHandle(conn net.Conn, command []string, knownReplicas *[]net.Conn, neededFlag *bool) {
-	const retStr = "+OK\r\n"
 	if command[1] == "listening-port" {
 		*knownReplicas = append(*knownReplicas, conn)
 		*neededFlag = true
 	}
-	_, _ = conn.Write([]byte(retStr))
+	_, _ = conn.Write(codec.EncodeSimpleString("OK"))
 }
 
 func psyncHandle(conn net.Conn, command []string) {
 	_ = command
 	const masterID = "8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb"
-	retStr := fmt.Sprintf("+FULLRESYNC %s 0\r\n", masterID)
-	_, _ = conn.Write([]byte(retStr))
+	_, _ = conn.Write(codec.EncodeSimpleString("FULLRESYNC " + masterID + " 0"))
 	err := sendRdbFile(conn)
 	if err != nil {
 		_, _ = conn.Write(codec.EncodeError(fmt.Errorf("error appeared during PSYNC: %w", err)))
 	}
 }
 
-func Propagate(knownReplicas []net.Conn, data []byte) {
+func Propagate(knownReplicas []net.Conn, data []byte) error {
+	var compositError error
 	for _, conn := range knownReplicas {
 		slog.Info(
 			"propagate to replica",
 			"addr", conn.RemoteAddr().String(),
 			"data", data,
 		)
-		_, _ = conn.Write(data)
+		_, err := conn.Write(data)
+		compositError = errors.Join(compositError, fmt.Errorf("can't propagate to connection %v: %w", conn, err))
 	}
+
+	return compositError
 }
 
 func sendRdbFile(connection net.Conn) error {
@@ -237,11 +288,7 @@ func sendRdbFile(connection net.Conn) error {
 	if err != nil {
 		return fmt.Errorf("can't read rdb file: %w", err)
 	}
-	length := len(file)
-	_, err = fmt.Fprintf(connection, "$%d\r\n%s", length, file)
-	if err != nil {
-		return fmt.Errorf("can't write rdb file to replica connection: %w", err)
-	}
+	_, _ = connection.Write(codec.EncodeBulkString(string(file)))
 	return nil
 }
 

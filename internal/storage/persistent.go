@@ -84,20 +84,9 @@ func encodeStringValue(key, value string, timestamp *time.Time) []byte {
 		enc = append(enc, []byte(strconv.FormatInt(timestamp.UnixMilli(), 10))...)
 	}
 	enc = append(enc, byte(String))
-	enc = append(enc, codec.EncodeString(key)...)
-	enc = append(enc, codec.EncodeString(value)...)
+	enc = append(enc, codec.EncodeBulkString(key)...)
+	enc = append(enc, codec.EncodeBulkString(value)...)
 	return enc
-}
-
-type rdbStructure struct {
-	magic            [5]byte
-	rdbVersion       [4]byte
-	aux              auxilaryField
-	databaseSelector int
-	resizeHint       resizeHint
-	values           map[string]string
-	timestamps       map[string]time.Time
-	crcSum           [8]byte
 }
 
 type auxilaryField struct {
@@ -110,33 +99,54 @@ type resizeHint struct {
 	timestampTableSize int
 }
 
-func DecodeRDB(r io.Reader) (rdbStructure, error) {
+type RDBStructure struct {
+	magic            [5]byte
+	rdbVersion       [4]byte
+	aux              auxilaryField
+	databaseSelector int
+	resizeHint       resizeHint
+	values           map[string]string
+	timestamps       map[string]time.Time
+	crcSum           [8]byte
+}
+
+func (r RDBStructure) Apply(st *Storage) {
+	st.storageMu.Lock()
+	st.timeMu.Lock()
+	defer st.storageMu.Unlock()
+	defer st.timeMu.Unlock()
+
+	st.storage = r.values
+	st.timestamps = r.timestamps
+}
+
+func DecodeRDB(r io.Reader) (RDBStructure, error) {
 	raw, err := io.ReadAll(r)
 	if err != nil {
-		return rdbStructure{}, fmt.Errorf("can't read rdb file: %w", err)
+		return RDBStructure{}, fmt.Errorf("can't read rdb file: %w", err)
 	}
 	if !slices.Equal(raw[0:5], []byte(magicString)) {
-		return rdbStructure{}, fmt.Errorf("missing magic bytes at the start of the rdb file")
+		return RDBStructure{}, fmt.Errorf("missing magic bytes at the start of the rdb file")
 	}
 	n := len(raw)
 	crcBin := raw[n-8 : n]
 	crc := binary.LittleEndian.Uint64(crcBin)
 	crcCalculated := crc64.Checksum(raw[0:n-8], nil)
 	if crc != crcCalculated {
-		return rdbStructure{}, fmt.Errorf("crc64 sum didn't match, rdb file may be corrupted")
+		return RDBStructure{}, fmt.Errorf("crc64 sum didn't match, rdb file may be corrupted")
 	}
 	i := 0
 	for i < len(raw)-1 && raw[i] != 'F' && raw[i+1] != 'E' {
 		i++
 	}
 	if raw[i] != 'F' && raw[i+1] != 'E' {
-		return rdbStructure{}, fmt.Errorf("can't find database selector block in rdb file")
+		return RDBStructure{}, fmt.Errorf("can't find database selector block in rdb file")
 	}
-	rdb := rdbStructure{}
+	rdb := RDBStructure{}
 	raw = raw[i+2:]
 	if raw[i] == 'F' && raw[i+1] == 'B' {
 		// parse resizedb fields
-		return rdbStructure{}, fmt.Errorf("not implemented")
+		return RDBStructure{}, fmt.Errorf("not implemented")
 	}
 	for len(raw) > 0 && (raw[0] != 'F' && raw[1] != 'F') {
 		shift, key, value, timestamp, err := parseKeyValuePair(raw)

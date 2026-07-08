@@ -11,7 +11,7 @@ import (
 func TestStringDecoder(t *testing.T) {
 	strs := []string{"OK", "", "hello", "привет", "a\r\nb", "😀", "line1\nline2", strings.Repeat("x", 1000)}
 	for _, s := range strs {
-		encoded := codec.EncodeString(s)
+		encoded := codec.EncodeBulkString(s)
 		decoded, err := codec.DecodeString(encoded)
 		assert.NoError(t, err)
 		assert.Equal(t, s, decoded)

@@ -2,14 +2,14 @@ package storage
 
 import (
 	"fmt"
-	"strconv"
-	"strings"
 	"sync"
 	"time"
 
-	"github.com/codecrafters-io/redis-starter-go/internal/codec"
 	"github.com/codecrafters-io/redis-starter-go/internal/config"
 )
+
+var ErrValueExpired = fmt.Errorf("the value is expired")
+var ErrKeyDoesntExist = fmt.Errorf("the key does not exist")
 
 type Storage struct {
 	storage    map[string]string
@@ -27,68 +27,53 @@ func NewStorage(cfg config.RedisConfig) *Storage {
 	}
 }
 
-func (st *Storage) Set(parsedData []string) (msg []byte, err error) {
-	if len(parsedData) < 3 {
-		return nil, fmt.Errorf("wrong number of arguments passed to SET command")
-	}
+func (st *Storage) Set(key, value string) {
 	st.storageMu.Lock()
 	defer st.storageMu.Unlock()
-	fmt.Println("parsedData", parsedData)
-	if len(parsedData) >= 5 && parsedData[3] == "px" {
-		st.timeMu.Lock()
-		defer st.timeMu.Unlock()
-		parsed, err := strconv.Atoi(parsedData[4])
-		if err != nil {
-			return nil, fmt.Errorf("invalid data for time delay\n Can't parse %v to int", parsedData[4])
-		}
-		st.timestamps[parsedData[1]] = time.Now().Add(time.Duration(parsed) * time.Millisecond)
-	}
-	st.storage[parsedData[1]] = parsedData[2]
-	if st.cfg.Role == config.MasterRole {
-		return []byte("+OK\r\n"), nil
-	}
-	// slave returns nothing
-	return nil, nil
+	st.storage[key] = value
 }
 
-func (st *Storage) Get(parsedData []string) (msg []byte) {
+func (st *Storage) SetWithExpiry(key, value string, expiration time.Time) {
+	st.storageMu.Lock()
+	st.timeMu.Lock()
+	defer st.storageMu.Unlock()
+	defer st.timeMu.Unlock()
+
+	st.storage[key] = value
+	st.timestamps[key] = expiration
+}
+
+func (st *Storage) Get(key string) (value string, err error) {
 	st.timeMu.RLock()
 	st.storageMu.RLock()
 	defer st.timeMu.RUnlock()
 	defer st.storageMu.RUnlock()
-	expires, exist := st.timestamps[parsedData[1]]
-	if !exist {
-		retStr := fmt.Sprintf("+%v\r\n", st.storage[parsedData[1]])
-		return []byte(retStr)
-	}
-	if time.Now().After(expires) {
-		retStr := "$-1\r\n"
-		return []byte(retStr)
+	expires, ok := st.timestamps[key]
+	if ok && time.Now().After(expires) {
+		return "", ErrValueExpired
 	}
 
-	retStr := fmt.Sprintf("+%v\r\n", st.storage[parsedData[1]])
-	return []byte(retStr)
+	value, ok = st.storage[key]
+	if !ok {
+		return "", ErrKeyDoesntExist
+	}
+	return value, nil
 }
 
-func (st *Storage) Keys(parsedData []string, pattern string) []byte {
-	/*
-		we could try to make this in 1 linear pass, not 2
-		we need to encode information about number of keys
-
-		we could firstly encode all keys, and then
-		append information about number of keys to the left side (start) of the message
-	*/
+func (st *Storage) Keys(parsedData []string, pattern string) []string {
 	st.storageMu.RLock()
 	defer st.storageMu.RUnlock()
 	keys := make([]string, 0)
 	for key := range st.storage {
-		keys = append(keys, key)
+		if matchesPattern(key, pattern) {
+			keys = append(keys, key)
+		}
 	}
-	var sb strings.Builder
-	header := fmt.Sprintf("*%v\r\n", len(keys))
-	sb.WriteString(header)
-	for _, key := range keys {
-		_, _ = sb.Write(codec.EncodeString(key))
-	}
-	return []byte(sb.String())
+	return keys
+}
+
+// not implemented
+func matchesPattern(key, pattern string) bool {
+	_, _ = key, pattern
+	return true
 }

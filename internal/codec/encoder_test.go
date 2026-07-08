@@ -24,7 +24,7 @@ func TestStringEncoding(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		assert.Equal(t, tc.expectedOutput, codec.EncodeString(tc.given))
+		assert.Equal(t, tc.expectedOutput, codec.EncodeBulkString(tc.given))
 	}
 }
 
