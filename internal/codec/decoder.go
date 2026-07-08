@@ -13,7 +13,6 @@ func Parse(buffer []byte) ([][]string, error) {
 	var buf []string
 	stringified := string(buffer)
 	splited := strings.Split(stringified, "\r\n")
-	log.Println(splited)
 	if buffer[0] == '*' {
 		n, err := strconv.Atoi(splited[0][1:])
 		if err != nil {

@@ -138,6 +138,7 @@ func handleConnection(
 				_, _ = connection.Write(codec.EncodeError(fmt.Errorf("can't parse accepted data: %w", err)))
 				continue
 			}
+			slog.Info("parsing finished", "parsed", parsedData)
 			for _, command := range parsedData {
 				if strings.ToUpper(command[0]) == "PING" {
 					handlePing(connection, command)
@@ -200,6 +201,7 @@ func handleSet(conn net.Conn, command []string, st *storage.Storage) {
 	// without timestamp
 	if len(command) == 3 {
 		st.Set(command[1], command[2])
+		conn.Write(codec.EncodeSimpleString("OK"))
 		return
 	}
 	// with timestamp
@@ -209,6 +211,7 @@ func handleSet(conn net.Conn, command []string, st *storage.Storage) {
 		return
 	}
 	st.SetWithExpiry(command[1], command[2], exp)
+	conn.Write(codec.EncodeSimpleString("OK"))
 }
 
 func parseExpiration(command []string) (time.Time, error) {
