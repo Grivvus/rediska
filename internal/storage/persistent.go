@@ -44,7 +44,7 @@ func EncodeToRDB(st *Storage) []byte {
 	_, _ = sb.Write(encodeValues(st))
 	_, _ = sb.Write([]byte{'F', 'F'})
 
-	crc := crc64.Checksum([]byte(sb.String()), nil)
+	crc := crc64.Checksum([]byte(sb.String()), crc64.MakeTable(crc64.ISO))
 	crcBin := binary.LittleEndian.AppendUint64(nil, crc)
 	_, _ = sb.Write(crcBin)
 	return []byte(sb.String())
@@ -131,7 +131,7 @@ func DecodeRDB(r io.Reader) (RDBStructure, error) {
 	n := len(raw)
 	crcBin := raw[n-8 : n]
 	crc := binary.LittleEndian.Uint64(crcBin)
-	crcCalculated := crc64.Checksum(raw[0:n-8], nil)
+	crcCalculated := crc64.Checksum(raw[0:n-8], crc64.MakeTable(crc64.ISO))
 	if crc != crcCalculated {
 		return RDBStructure{}, fmt.Errorf("crc64 sum didn't match, rdb file may be corrupted")
 	}
