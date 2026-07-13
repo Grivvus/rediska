@@ -7,7 +7,7 @@ import (
 )
 
 func EncodeBulkString(s string) []byte {
-	return []byte(fmt.Sprintf("$%s\r\n%s\r\n", strconv.Itoa(len(s)), s))
+	return fmt.Appendf(nil, "$%s\r\n%s\r\n", strconv.Itoa(len(s)), s)
 }
 
 func NullBulkString() []byte {

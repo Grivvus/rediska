@@ -3,14 +3,16 @@ package storage
 import (
 	"encoding/binary"
 	"fmt"
-	"hash/crc64"
 	"io"
+	"maps"
+	"math"
 	"slices"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/codecrafters-io/redis-starter-go/internal/codec"
+	crc64 "github.com/codecrafters-io/redis-starter-go/internal/crc64jones"
 )
 
 type RDBValueType byte
@@ -44,7 +46,7 @@ func EncodeToRDB(st *Storage) []byte {
 	_, _ = sb.Write(encodeValues(st))
 	_, _ = sb.Write([]byte{'F', 'F'})
 
-	crc := crc64.Checksum([]byte(sb.String()), crc64.MakeTable(crc64.ISO))
+	crc := crc64.CRC64(0, sb.String())
 	crcBin := binary.LittleEndian.AppendUint64(nil, crc)
 	_, _ = sb.Write(crcBin)
 	return []byte(sb.String())
@@ -81,7 +83,7 @@ func encodeStringValue(key, value string, timestamp *time.Time) []byte {
 	enc := make([]byte, 0, len(key)+len(value)+32)
 	if timestamp != nil {
 		enc = append(enc, 'F', 'C')
-		enc = append(enc, []byte(strconv.FormatInt(timestamp.UnixMilli(), 10))...)
+		enc = binary.LittleEndian.AppendUint64(enc, uint64(timestamp.UnixMilli()))
 	}
 	enc = append(enc, byte(String))
 	enc = append(enc, codec.EncodeBulkString(key)...)
@@ -116,8 +118,8 @@ func (r RDBStructure) Apply(st *Storage) {
 	defer st.storageMu.Unlock()
 	defer st.timeMu.Unlock()
 
-	st.storage = r.values
-	st.timestamps = r.timestamps
+	st.storage = maps.Clone(r.values)
+	st.timestamps = maps.Clone(r.timestamps)
 }
 
 func DecodeRDB(r io.Reader) (RDBStructure, error) {
@@ -131,19 +133,26 @@ func DecodeRDB(r io.Reader) (RDBStructure, error) {
 	n := len(raw)
 	crcBin := raw[n-8 : n]
 	crc := binary.LittleEndian.Uint64(crcBin)
-	crcCalculated := crc64.Checksum(raw[0:n-8], crc64.MakeTable(crc64.ISO))
+	crcCalculated := crc64.CRC64(0, string(raw[0:n-8]))
 	if crc != crcCalculated {
-		return RDBStructure{}, fmt.Errorf("crc64 sum didn't match, rdb file may be corrupted")
+		return RDBStructure{}, fmt.Errorf(
+			"crc64 sum didn't match, rdb file may be corrupted: expected %v, got %v",
+			crc, crcCalculated,
+		)
 	}
 	i := 0
-	for i < len(raw)-1 && raw[i] != 'F' && raw[i+1] != 'E' {
+	for i < len(raw)-1 && !(raw[i] == 'F' && raw[i+1] == 'E') {
 		i++
 	}
-	if raw[i] != 'F' && raw[i+1] != 'E' {
+	if raw[i] != 'F' || raw[i+1] != 'E' {
 		return RDBStructure{}, fmt.Errorf("can't find database selector block in rdb file")
 	}
-	rdb := RDBStructure{}
-	raw = raw[i+2:]
+	rdb := RDBStructure{
+		values:     make(map[string]string),
+		timestamps: make(map[string]time.Time),
+	}
+	// skip FE + DB_SELECTOR
+	raw = raw[i+2+2:]
 	if raw[i] == 'F' && raw[i+1] == 'B' {
 		// parse resizedb fields
 		return RDBStructure{}, fmt.Errorf("not implemented")
@@ -171,11 +180,11 @@ func parseKeyValuePair(
 		case 'C':
 			// ms timestamp is 8 byte long
 			unixMSBytes := encoded[i+2 : i+2+8]
-			unixMS, err := strconv.ParseInt(string(unixMSBytes), 10, 64)
-			if err != nil {
-				return 0, "", "", nil, fmt.Errorf("can't parse expiry timestamp: %w", err)
+			unixMS := binary.LittleEndian.Uint64(unixMSBytes)
+			if unixMS > math.MaxInt64 {
+				panic("can't convert uint64 to int64")
 			}
-			ts := time.UnixMilli(unixMS)
+			ts := time.UnixMilli(int64(unixMS))
 			timestamp = &ts
 
 			// FC + 8 bytes timestamp
@@ -184,11 +193,8 @@ func parseKeyValuePair(
 		case 'D':
 			// sec timestamp is 4 byte long
 			unixSecBytes := encoded[i+2 : i+2+4]
-			unixSec, err := strconv.ParseInt(string(unixSecBytes), 10, 32)
-			if err != nil {
-				return 0, "", "", nil, fmt.Errorf("can't prase expiry timestamp: %w", err)
-			}
-			ts := time.Unix(unixSec, 0)
+			unixSec := binary.LittleEndian.Uint32(unixSecBytes)
+			ts := time.Unix(int64(unixSec), 0)
 			timestamp = &ts
 
 			// FD + 4 bytes timestamp
@@ -206,15 +212,13 @@ func parseKeyValuePair(
 	if err != nil {
 		return 0, "", "", nil, fmt.Errorf("can't decode key: %w", err)
 	}
-	// skip '$' of the key
-	i++
-	for i < len(encoded) && encoded[i] != '$' {
-		i++
-	}
+	// skip '$LEN', encoded key
+	i += len(strconv.Itoa(len(key))) + len(key) + 5 // + '$' + \r\n x2
 	val, err = codec.DecodeString(encoded[i:])
 	if err != nil {
 		return 0, "", "", nil, fmt.Errorf("can't decode value: %w", err)
 	}
+	i += len(strconv.Itoa(len(val))) + len(val) + 5 // + '$' + \r\n x2
 
 	return
 }
