@@ -119,25 +119,9 @@ func encodeStringValue(key, value string, timestamp *time.Time) []byte {
 	return enc
 }
 
-type auxilaryField struct {
-	redisVersion string
-	creationTime time.Time
-}
-
-type resizeHint struct {
-	valueTableSize     int
-	timestampTableSize int
-}
-
 type RDBStructure struct {
-	magic            [5]byte
-	rdbVersion       [4]byte
-	aux              auxilaryField
-	databaseSelector int
-	resizeHint       resizeHint
-	values           map[string]string
-	timestamps       map[string]time.Time
-	crcSum           [8]byte
+	values     map[string]string
+	timestamps map[string]time.Time
 }
 
 func (r RDBStructure) Apply(st *Storage) {

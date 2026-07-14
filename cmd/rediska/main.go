@@ -155,7 +155,7 @@ func handleConnection(
 				} else if strings.ToUpper(command[0]) == "KEYS" {
 					handleKeys(connection, command, st)
 				} else if strings.ToUpper(command[0]) == "SAVE" {
-					_, _ = connection.Write(codec.EncodeError(fmt.Errorf("SAVE command is not implemented yet")))
+					handleSave(connection, command, st)
 				} else if strings.ToUpper(command[0]) == "REPLCONF" {
 					replconfHandle(connection, command, &knownReplicas, &needed)
 				} else if strings.ToUpper(command[0]) == "PSYNC" {
@@ -197,11 +197,12 @@ func handleSet(conn net.Conn, command []string, st *storage.Storage) {
 			but got %v`,
 			len(command),
 		)))
+		return
 	}
 	// without timestamp
 	if len(command) == 3 {
 		st.Set(command[1], command[2])
-		conn.Write(codec.EncodeSimpleString("OK"))
+		_, _ = conn.Write(codec.EncodeSimpleString("OK"))
 		return
 	}
 	// with timestamp
@@ -211,7 +212,7 @@ func handleSet(conn net.Conn, command []string, st *storage.Storage) {
 		return
 	}
 	st.SetWithExpiry(command[1], command[2], exp)
-	conn.Write(codec.EncodeSimpleString("OK"))
+	_, _ = conn.Write(codec.EncodeSimpleString("OK"))
 }
 
 func parseExpiration(command []string) (time.Time, error) {
@@ -245,12 +246,37 @@ func handleConfig(conn net.Conn, command []string, cfg config.RedisConfig) {
 }
 
 func handleKeys(conn net.Conn, command []string, st *storage.Storage) {
+	if len(command) == 1 {
+		_, _ = conn.Write(codec.EncodeError(fmt.Errorf("wrong usage of KEYS command, expect some arguments")))
+		return
+	}
 	if command[1] != "*" {
 		_, _ = conn.Write(codec.EncodeError(fmt.Errorf("KEYS command not fully implemented")))
 		return
 	}
 	keys := st.Keys(command, command[1])
 	_, _ = conn.Write(codec.EncodeArray(keys))
+}
+
+func handleSave(conn net.Conn, command []string, st *storage.Storage) {
+	rdb := storage.EncodeToRDB(st)
+	var fname string
+	if len(command) > 1 {
+		fname = command[1]
+	} else {
+		fname = "dump.rdb"
+	}
+	f, err := os.Create(fname)
+	if err != nil {
+		_, _ = conn.Write(codec.EncodeError(err))
+		return
+	}
+	_, err = f.Write(rdb)
+	if err != nil {
+		_, _ = conn.Write(codec.EncodeError(fmt.Errorf("can't write data to rdb file: %w", err)))
+		return
+	}
+	_, _ = conn.Write(codec.EncodeSimpleString("OK"))
 }
 
 func replconfHandle(conn net.Conn, command []string, knownReplicas *[]net.Conn, neededFlag *bool) {

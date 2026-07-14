@@ -60,9 +60,6 @@ func emptyStorage() *Storage {
 }
 
 func randStringN(n int) string {
-	const alphaStart = 'a'
-	const alphaEnd = 'z'
-
 	b := strings.Builder{}
 	for range n {
 		b.WriteByte(byte(rand.IntN(int('z'-'a'))) + 'a')
