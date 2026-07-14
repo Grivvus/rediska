@@ -9,6 +9,7 @@ import (
 )
 
 func TestStringDecoder(t *testing.T) {
+	t.Parallel()
 	strs := []string{"OK", "", "hello", "привет", "a\r\nb", "😀", "line1\nline2", strings.Repeat("x", 1000)}
 	for _, s := range strs {
 		encoded := codec.EncodeBulkString(s)
@@ -19,6 +20,7 @@ func TestStringDecoder(t *testing.T) {
 }
 
 func TestArrayDecoder(t *testing.T) {
+	t.Parallel()
 	arrays := [][]string{{"PING"}, {"SET", "key", "value"}, {}, {""}}
 	for _, arr := range arrays {
 		encoded := codec.EncodeArray(arr)

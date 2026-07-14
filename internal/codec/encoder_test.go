@@ -9,6 +9,7 @@ import (
 )
 
 func TestStringEncoding(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		given          string
 		expectedOutput []byte
@@ -29,6 +30,7 @@ func TestStringEncoding(t *testing.T) {
 }
 
 func TestArrayEncoding(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		given    []string
 		expected []byte

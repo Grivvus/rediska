@@ -8,6 +8,7 @@ import (
 )
 
 func TestSimple(t *testing.T) {
+	t.Parallel()
 	checksum := crc64.CRC64(0, "123456789")
 	assert.Equal(t, uint64(0xe9c6d914c4b8d9ca), checksum)
 }
