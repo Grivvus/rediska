@@ -4,7 +4,6 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
-	"maps"
 	"math"
 	"slices"
 	"strconv"
@@ -34,6 +33,35 @@ const (
 	ListInQuicklist // 14
 )
 
+func (vt RDBValueType) String() string {
+	switch vt {
+	case String:
+		return "String"
+	case List:
+		return "List"
+	case Set:
+		return "Set"
+	case SortedSet:
+		return "SortedSet"
+	case Hash:
+		return "Hash"
+	case Zipmap:
+		return "Zipmap"
+	case Ziplist:
+		return "Ziplist"
+	case Intset:
+		return "Intset"
+	case SortedSetInZiplist:
+		return "SortedSetInZiplist"
+	case HashmapInZiplist:
+		return "HashmapInZiplist"
+	case ListInQuicklist:
+		return "ListInQuicklist"
+	default:
+		return fmt.Sprintf("Unkown type: %d", vt)
+	}
+}
+
 const magicString = "REDIS"
 const rdbVersion = "0011"
 
@@ -44,7 +72,7 @@ func EncodeToRDB(st *Storage) []byte {
 	_, _ = sb.Write(encodeAuxilaryField(st))
 	_, _ = sb.Write(encodeDBSelector(st))
 	_, _ = sb.Write(encodeValues(st))
-	_, _ = sb.Write([]byte{'F', 'F'})
+	_ = sb.WriteByte(0xFF)
 
 	crc := crc64.CRC64(0, sb.String())
 	crcBin := binary.LittleEndian.AppendUint64(nil, crc)
@@ -53,12 +81,12 @@ func EncodeToRDB(st *Storage) []byte {
 }
 
 func encodeAuxilaryField(_ *Storage) []byte {
-	return []byte("FA")
+	return []byte{0xFA}
 }
 
 func encodeDBSelector(_ *Storage) []byte {
 	const defaultDBSelector = "00"
-	return []byte("FE" + defaultDBSelector)
+	return append([]byte{0xFE}, []byte(defaultDBSelector)...)
 }
 
 func encodeValues(st *Storage) []byte {
@@ -82,7 +110,7 @@ func encodeValues(st *Storage) []byte {
 func encodeStringValue(key, value string, timestamp *time.Time) []byte {
 	enc := make([]byte, 0, len(key)+len(value)+32)
 	if timestamp != nil {
-		enc = append(enc, 'F', 'C')
+		enc = append(enc, 0xFC)
 		enc = binary.LittleEndian.AppendUint64(enc, uint64(timestamp.UnixMilli()))
 	}
 	enc = append(enc, byte(String))
@@ -118,8 +146,8 @@ func (r RDBStructure) Apply(st *Storage) {
 	defer st.storageMu.Unlock()
 	defer st.timeMu.Unlock()
 
-	st.storage = maps.Clone(r.values)
-	st.timestamps = maps.Clone(r.timestamps)
+	st.storage = r.values
+	st.timestamps = r.timestamps
 }
 
 func DecodeRDB(r io.Reader) (RDBStructure, error) {
@@ -140,24 +168,25 @@ func DecodeRDB(r io.Reader) (RDBStructure, error) {
 			crc, crcCalculated,
 		)
 	}
-	i := 0
-	for i < len(raw)-1 && !(raw[i] == 'F' && raw[i+1] == 'E') {
-		i++
-	}
-	if raw[i] != 'F' || raw[i+1] != 'E' {
-		return RDBStructure{}, fmt.Errorf("can't find database selector block in rdb file")
-	}
 	rdb := RDBStructure{
 		values:     make(map[string]string),
 		timestamps: make(map[string]time.Time),
 	}
-	// skip FE + DB_SELECTOR
-	raw = raw[i+2+2:]
-	if raw[i] == 'F' && raw[i+1] == 'B' {
+	raw = raw[0 : n-8]
+	i := 0
+	for i < len(raw) && raw[i] != 0xFE {
+		i++
+	}
+	if i >= len(raw) {
+		return rdb, nil
+	}
+	// skip 0xFE + DB_SELECTOR = 3bytes
+	raw = raw[i+3:]
+	if raw[0] == 0xFB {
 		// parse resizedb fields
 		return RDBStructure{}, fmt.Errorf("not implemented")
 	}
-	for len(raw) > 0 && (raw[0] != 'F' && raw[1] != 'F') {
+	for len(raw) > 0 && raw[0] != 0xFF {
 		shift, key, value, timestamp, err := parseKeyValuePair(raw)
 		if err != nil {
 			return rdb, err
@@ -175,38 +204,36 @@ func DecodeRDB(r io.Reader) (RDBStructure, error) {
 func parseKeyValuePair(
 	encoded []byte,
 ) (i int, key string, val string, timestamp *time.Time, err error) {
-	if encoded[i] == 'F' {
-		switch encoded[i+1] {
-		case 'C':
-			// ms timestamp is 8 byte long
-			unixMSBytes := encoded[i+2 : i+2+8]
-			unixMS := binary.LittleEndian.Uint64(unixMSBytes)
-			if unixMS > math.MaxInt64 {
-				panic("can't convert uint64 to int64")
-			}
-			ts := time.UnixMilli(int64(unixMS))
-			timestamp = &ts
-
-			// FC + 8 bytes timestamp
-			i += 10
-
-		case 'D':
-			// sec timestamp is 4 byte long
-			unixSecBytes := encoded[i+2 : i+2+4]
-			unixSec := binary.LittleEndian.Uint32(unixSecBytes)
-			ts := time.Unix(int64(unixSec), 0)
-			timestamp = &ts
-
-			// FD + 4 bytes timestamp
-			i += 6
-		default:
-			return 0, "", "", nil, fmt.Errorf("invalid parsing state at %v", i+1)
+	switch encoded[i] {
+	case 0xFC:
+		// ms timestamp is 8 byte long
+		i++
+		unixMSBytes := encoded[i : i+8]
+		unixMS := binary.LittleEndian.Uint64(unixMSBytes)
+		if unixMS > math.MaxInt64 {
+			panic("can't convert uint64 to int64")
 		}
+		ts := time.UnixMilli(int64(unixMS))
+		timestamp = &ts
+
+		// 8 bytes timestamp
+		i += 8
+
+	case 0xFD:
+		// sec timestamp is 4 byte long
+		i++
+		unixSecBytes := encoded[i : i+4]
+		unixSec := binary.LittleEndian.Uint32(unixSecBytes)
+		ts := time.Unix(int64(unixSec), 0)
+		timestamp = &ts
+
+		// 4 bytes timestamp
+		i += 4
 	}
 	valueType := RDBValueType(encoded[i])
 	i++
 	if valueType != String {
-		return 0, "", "", nil, fmt.Errorf("unsupported value type: %v", valueType)
+		return 0, "", "", nil, fmt.Errorf("unsupported value type: %v", valueType.String())
 	}
 	key, err = codec.DecodeString(encoded[i:])
 	if err != nil {
