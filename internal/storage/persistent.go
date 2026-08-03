@@ -96,9 +96,14 @@ func encodeValues(st *Storage) []byte {
 	defer st.timeMu.RUnlock()
 
 	var encoded []byte
+	now := time.Now()
 	for k, v := range st.storage {
 		t, hasTime := st.timestamps[k]
 		if hasTime {
+			if now.After(t) {
+				// expired value
+				continue
+			}
 			encoded = append(encoded, encodeStringValue(k, v, &t)...)
 		}
 		encoded = append(encoded, encodeStringValue(k, v, nil)...)

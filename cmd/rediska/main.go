@@ -21,18 +21,19 @@ func main() {
 	)
 	defer cancel()
 
-	slog.Info("Rediska startup")
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{AddSource: true}))
+	logger.Info("Rediska startup")
 	providedFlags := flags.Parse()
 
 	cfg := config.Default()
 	cfg.WithFlags(providedFlags)
 
-	st := storage.NewStorage(*cfg)
+	st := storage.NewStorage(*cfg, logger)
 
 	if cfg.Role == config.ReplicaRole {
-		err := lifecycle.Handshake(ctx, *cfg, st)
+		err := lifecycle.Handshake(ctx, *cfg, st, logger)
 		if err != nil {
-			slog.Error("can't make a handshake with master", "err", err)
+			logger.Error("can't make a handshake with master", "err", err)
 			return
 		}
 	}
@@ -40,20 +41,20 @@ func main() {
 	if cfg.RdbDir != "" || cfg.RdbFilename != "" {
 		f, err := os.Open(cfg.RdbDir + cfg.RdbFilename)
 		if err != nil {
-			slog.Error("can't open rdb file", "err", err)
+			logger.Error("can't open rdb file", "err", err)
 			return
 		}
 		rdb, err := storage.DecodeRDB(f)
 		if err != nil {
-			slog.Error("can't parse rdb file", "err", err)
+			logger.Error("can't parse rdb file", "err", err)
 			return
 		}
 		rdb.Apply(st)
 	}
 
-	err := lifecycle.Listen(ctx, *cfg, st)
+	err := lifecycle.Listen(ctx, *cfg, st, logger)
 	if err != nil {
-		slog.Error(err.Error())
+		logger.Error(err.Error())
 		return
 	}
 	<-ctx.Done()

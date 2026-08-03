@@ -15,7 +15,8 @@ import (
 )
 
 func Listen(
-	ctx context.Context, cfg config.RedisConfig, st *storage.Storage,
+	ctx context.Context, cfg config.RedisConfig,
+	st *storage.Storage, logger *slog.Logger,
 ) error {
 	listner, err := net.Listen("tcp", "0.0.0.0:"+cfg.Port)
 	if err != nil {
@@ -27,7 +28,7 @@ func Listen(
 	go func() {
 		<-ctx.Done()
 
-		slog.Info("Close listner", "host", "0.0.0.0", "port", cfg.Port)
+		logger.Info("Close listner", "host", "0.0.0.0", "port", cfg.Port)
 		_ = listner.Close()
 	}()
 
@@ -37,17 +38,18 @@ func Listen(
 			if ctx.Err() != nil {
 				return nil
 			}
-			slog.Error("", "err", fmt.Errorf("can't accept connection: %w", err))
+			logger.Error("", "err", fmt.Errorf("can't accept connection: %w", err))
 			return err
 		}
 		go func() {
-			handleConnection(ctx, cfg, connection, st, []net.Conn{})
+			handleConnection(ctx, logger, cfg, connection, st, []net.Conn{})
 		}()
 	}
 }
 
 func handleConnection(
-	ctx context.Context, cfg config.RedisConfig, connection net.Conn,
+	ctx context.Context, logger *slog.Logger,
+	cfg config.RedisConfig, connection net.Conn,
 	st *storage.Storage, knownReplicas []net.Conn,
 ) {
 	needed := false
@@ -64,13 +66,13 @@ func handleConnection(
 		default:
 			n, err := connection.Read(readBuffer)
 			if err != nil && !errors.Is(err, io.EOF) {
-				slog.Error("error while reading from the connection", "err", err)
+				logger.Error("error while reading from the connection", "err", err)
 				continue
 			} else if errors.Is(err, io.EOF) || n == 0 {
 				return
 			}
 			if n == len(readBuffer) {
-				slog.Error("can't fit message into buffer", "len buffer", len(readBuffer))
+				logger.Error("can't fit message into buffer", "len buffer", len(readBuffer))
 				_, _ = connection.Write(codec.EncodeError(fmt.Errorf("message is too long")))
 				// return because now in connection lays some garbage
 				// that we couldn't fit into buffer
@@ -78,13 +80,13 @@ func handleConnection(
 				// and then start processing next one
 				return
 			}
-			slog.Info("", "bytes recieved", n, "conn", connection)
+			logger.Info("", "bytes recieved", n, "conn", connection)
 			parsedData, err := codec.Parse(readBuffer)
 			if err != nil {
 				_, _ = connection.Write(codec.EncodeError(fmt.Errorf("can't parse accepted data: %w", err)))
 				continue
 			}
-			slog.Info("parsing finished", "parsed", parsedData)
+			logger.Info("parsing finished", "parsed", parsedData)
 			for _, command := range parsedData {
 				if strings.ToUpper(command[0]) == "PING" {
 					handlePing(connection, command)

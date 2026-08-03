@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"log/slog"
 	"net"
 
 	"github.com/codecrafters-io/redis-starter-go/internal/codec"
@@ -12,7 +13,7 @@ import (
 )
 
 func Handshake(
-	ctx context.Context, cfg config.RedisConfig, st *storage.Storage,
+	ctx context.Context, cfg config.RedisConfig, st *storage.Storage, logger *slog.Logger,
 ) error {
 	conn, err := getMasterConnection(cfg)
 	if err != nil {
@@ -43,7 +44,7 @@ func Handshake(
 		return fmt.Errorf("can't read from master: %w", err)
 	}
 	go func() {
-		handleConnection(ctx, cfg, conn, st, []net.Conn{} /*known replicas*/)
+		handleConnection(ctx, logger, cfg, conn, st, []net.Conn{} /*known replicas*/)
 	}()
 	return nil
 }

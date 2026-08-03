@@ -35,6 +35,7 @@ type RedisConfig struct {
 	MasterPort       string
 	MasterReplOffset int
 	MasterReplid     [40]byte
+	GCPeriodSec      int
 }
 
 func Default() *RedisConfig {
@@ -42,6 +43,7 @@ func Default() *RedisConfig {
 		Port:         "6379",
 		Role:         MasterRole,
 		MasterReplid: generateReplid(),
+		GCPeriodSec:  15, /*default value*/
 	}
 }
 
