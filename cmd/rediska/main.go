@@ -30,12 +30,11 @@ func main() {
 	st := storage.NewStorage(*cfg)
 
 	if cfg.Role == config.ReplicaRole {
-		go func() {
-			err := lifecycle.Handshake(ctx, *cfg, st)
-			if err != nil {
-				slog.Error("error during handshake", "err", err)
-			}
-		}()
+		err := lifecycle.Handshake(ctx, *cfg, st)
+		if err != nil {
+			slog.Error("can't make a handshake with master", "err", err)
+			return
+		}
 	}
 
 	if cfg.RdbDir != "" || cfg.RdbFilename != "" {

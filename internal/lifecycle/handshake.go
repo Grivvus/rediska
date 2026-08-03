@@ -43,7 +43,7 @@ func Handshake(
 		return fmt.Errorf("can't read from master: %w", err)
 	}
 	go func() {
-		handleConnection(ctx, cfg, conn, st, []net.Conn{})
+		handleConnection(ctx, cfg, conn, st, []net.Conn{} /*known replicas*/)
 	}()
 	return nil
 }
