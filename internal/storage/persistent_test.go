@@ -3,6 +3,7 @@ package storage
 import (
 	"bytes"
 	"io"
+	"log/slog"
 	"math/rand/v2"
 	"os"
 	"strings"
@@ -40,7 +41,7 @@ func TestDecodeEmpty(t *testing.T) {
 }
 
 func genTestStorage() *Storage {
-	st := NewStorage(*config.Default())
+	st := NewStorage(*config.Default(), testLogger())
 	nKeys := rand.IntN(5) + 2
 	for range nKeys {
 		key, value := randStringN(6), randStringN(rand.IntN(30)+1)
@@ -56,7 +57,11 @@ func genTestStorage() *Storage {
 }
 
 func emptyStorage() *Storage {
-	return NewStorage(*config.Default())
+	return NewStorage(*config.Default(), testLogger())
+}
+
+func testLogger() *slog.Logger {
+	return slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{}))
 }
 
 func randStringN(n int) string {
