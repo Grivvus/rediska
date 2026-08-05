@@ -34,9 +34,14 @@ func NewStorage(cfg config.RedisConfig, logger *slog.Logger) *Storage {
 }
 
 func (st *Storage) Set(key, value string) {
+	// if there's old value with some expiry, delete expiration time
+	st.timeMu.Lock()
+	delete(st.timestamps, key)
+	st.timeMu.Unlock()
+
 	st.storageMu.Lock()
-	defer st.storageMu.Unlock()
 	st.storage[key] = value
+	st.storageMu.Unlock()
 }
 
 func (st *Storage) SetWithExpiry(key, value string, expiration time.Time) {

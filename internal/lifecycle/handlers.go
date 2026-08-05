@@ -21,7 +21,11 @@ func handlePing(conn net.Conn, command []string) {
 }
 
 func handleEcho(conn net.Conn, command []string) {
-	_, _ = conn.Write(codec.EncodeArray(command[1:]))
+	if len(command) != 2 {
+		_, _ = conn.Write(codec.EncodeError(fmt.Errorf("ERR wrong number of arguments for 'echo' command")))
+		return
+	}
+	_, _ = conn.Write(codec.EncodeBulkString(command[1]))
 }
 
 func handleGet(conn net.Conn, command []string, st *storage.Storage) {
@@ -34,33 +38,73 @@ func handleGet(conn net.Conn, command []string, st *storage.Storage) {
 	_, _ = conn.Write(codec.EncodeBulkString(msg))
 }
 
+type setCommand struct {
+	SetIfNotExist bool // NX flag
+	SetIfExist    bool // XX flag
+	KeepTTL       bool
+	Get           bool
+
+	Key string
+	Val string
+	Exp *time.Time // EX | PX | EXAT | PXAT
+}
+
+func parseSetCommand(raw []string) (setCommand, error) {
+	if len(raw) < 3 {
+		return setCommand{}, fmt.Errorf("ERR wrong number of arguments for 'set' command")
+	}
+	key, val := raw[1], raw[2]
+	i := 3
+	command := setCommand{
+		Key: key,
+		Val: val,
+	}
+	for i < len(raw) {
+		switch strings.ToUpper(raw[i]) {
+		case "EX", "PX", "EXAT", "PXAT":
+			if i+1 >= len(raw) {
+				return setCommand{}, fmt.Errorf("ERR wrong number of arguments for 'set' command")
+			}
+			t, err := parseExpiration(raw[i], raw[i+1])
+			if err != nil {
+				return setCommand{}, err
+			}
+			command.Exp = &t
+			i++
+		case "NX":
+			command.SetIfNotExist = true
+		case "XX":
+			command.SetIfExist = true
+		case "KEEPTTL":
+			command.KeepTTL = true
+		case "GET":
+			command.Get = true
+		default:
+			return setCommand{}, fmt.Errorf("ERR unknown option '%v' for 'set' command", raw[i])
+		}
+		i++
+	}
+
+	return command, nil
+}
+
 func handleSet(conn net.Conn, command []string, st *storage.Storage) {
-	err := propagate([]net.Conn{}, codec.EncodeArray(command))
-	if err != nil {
-		slog.Error("can't propagate SET command", "err", err)
-	}
-	if len(command) != 3 && len(command) != 5 {
-		_, _ = conn.Write(codec.EncodeError(fmt.Errorf(
-			`unexpected number of arguments,
-			exepcted 3 for value without timestamp and 5 for value with timestamp,
-			but got %v`,
-			len(command),
-		)))
-		return
-	}
-	// without timestamp
-	if len(command) == 3 {
-		st.Set(command[1], command[2])
-		_, _ = conn.Write(codec.EncodeSimpleString("OK"))
-		return
-	}
-	// with timestamp
-	exp, err := parseExpiration(command)
+	setCommand, err := parseSetCommand(command)
 	if err != nil {
 		_, _ = conn.Write(codec.EncodeError(err))
 		return
 	}
-	st.SetWithExpiry(command[1], command[2], exp)
+
+	err = propagate([]net.Conn{}, codec.EncodeArray(command))
+	if err != nil {
+		slog.Error("can't propagate SET command", "err", err)
+	}
+
+	if setCommand.Exp != nil {
+		st.SetWithExpiry(setCommand.Key, setCommand.Val, *setCommand.Exp)
+	} else {
+		st.Set(setCommand.Key, setCommand.Val)
+	}
 	_, _ = conn.Write(codec.EncodeSimpleString("OK"))
 }
 
@@ -79,22 +123,28 @@ func propagate(knownReplicas []net.Conn, data []byte) error {
 	return compositError
 }
 
-func parseExpiration(command []string) (time.Time, error) {
-	if command[3] != "px" {
-		return time.Time{}, fmt.Errorf(
-			"unexpected message format, expect 'px' for timestamp, got '%v'",
-			command[3],
-		)
-	}
-	parsed, err := strconv.Atoi(command[4])
+func parseExpiration(expModifier /* EX, PX, EXAT, PXAT */, expValue string) (time.Time, error) {
+	expModifier = strings.ToUpper(expModifier)
+	parsed, err := strconv.ParseInt(expValue, 10, 64)
 	if err != nil {
 		return time.Time{}, fmt.Errorf(
-			"invalid data for time delay\n Can't parse %v to int",
-			command[4],
+			"invalid data for time delay\n can't parse %v to int",
+			expValue,
 		)
 	}
-	exp := time.Now().Add(time.Duration(parsed) * time.Millisecond)
-	return exp, nil
+	now := time.Now()
+	switch expModifier {
+	case "EX":
+		return now.Add(time.Duration(parsed) * time.Second), nil
+	case "PX":
+		return now.Add(time.Duration(parsed) * time.Millisecond), nil
+	case "EXAT":
+		return time.Unix(parsed, 0), nil
+	case "PXAT":
+		return time.UnixMilli(parsed), nil
+	default:
+		return time.Time{}, fmt.Errorf("ERR unknown time modifier '%v'", expModifier)
+	}
 }
 
 func handleConfig(conn net.Conn, command []string, cfg config.RedisConfig) {
