@@ -58,6 +58,12 @@ func handleConnection(
 			_ = connection.Close()
 		}
 	}()
+	defer func() {
+		if r := recover(); r != nil {
+			logger.Error("recovered from panic", "r", r)
+			_, _ = connection.Write(codec.EncodeError(fmt.Errorf("unknown fatal error: %v", r)))
+		}
+	}()
 	readBuffer := make([]byte, 1024)
 	for {
 		select {
