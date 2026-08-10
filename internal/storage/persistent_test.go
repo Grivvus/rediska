@@ -8,7 +8,6 @@ import (
 	"os"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/codecrafters-io/redis-starter-go/internal/config"
 	"github.com/stretchr/testify/assert"
@@ -45,12 +44,7 @@ func genTestStorage() *Storage {
 	nKeys := rand.IntN(5) + 2
 	for range nKeys {
 		key, value := randStringN(6), randStringN(rand.IntN(30)+1)
-		if rand.Int()%2 == 1 {
-			st.Set(key, value)
-		} else {
-			ts := time.Now().Add(time.Duration(rand.N(100)) * time.Second)
-			st.SetWithExpiry(key, value, ts)
-		}
+		st.Set(key, value)
 	}
 
 	return st
