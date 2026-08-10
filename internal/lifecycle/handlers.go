@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -29,6 +30,10 @@ func handleEcho(conn net.Conn, command []string) {
 }
 
 func handleGet(conn net.Conn, command []string, st *storage.Storage) {
+	if len(command) != 2 {
+		_, _ = conn.Write(codec.EncodeError(fmt.Errorf("ERR wrong number of arguments for 'get' command")))
+		return
+	}
 	msg, err := st.Get(command[1])
 	// expired or no value
 	if err != nil {
@@ -160,15 +165,18 @@ func handleConfig(conn net.Conn, command []string, cfg config.RedisConfig) {
 }
 
 func handleKeys(conn net.Conn, command []string, st *storage.Storage) {
-	if len(command) == 1 {
-		_, _ = conn.Write(codec.EncodeError(fmt.Errorf("wrong usage of KEYS command, expect some arguments")))
+	if len(command) != 2 {
+		_, _ = conn.Write(codec.EncodeError(fmt.Errorf("ERR wrong number of arguments for 'keys' command")))
 		return
 	}
-	if command[1] != "*" {
-		_, _ = conn.Write(codec.EncodeError(fmt.Errorf("KEYS command not fully implemented")))
+	pattern := redisPatternToGoRegexp(command[1])
+	re, err := regexp.Compile(pattern)
+	if err != nil {
+		slog.Error("can't compile string pattern for 'keys'", "err", err)
+		_, _ = conn.Write(codec.EncodeError(fmt.Errorf("ERR invalid string pattern for 'keys' command")))
 		return
 	}
-	keys := st.Keys(command, command[1])
+	keys := st.Keys(re)
 	_, _ = conn.Write(codec.EncodeArray(keys))
 }
 
@@ -194,6 +202,10 @@ func handleSave(conn net.Conn, command []string, st *storage.Storage) {
 }
 
 func replconfHandle(conn net.Conn, command []string, knownReplicas *[]net.Conn, neededFlag *bool) {
+	if len(command) != 2 {
+		_, _ = conn.Write(codec.EncodeError(fmt.Errorf("ERR wrong number of arguments for 'replconf' command")))
+		return
+	}
 	if command[1] == "listening-port" {
 		*knownReplicas = append(*knownReplicas, conn)
 		*neededFlag = true

@@ -3,6 +3,7 @@ package storage
 import (
 	"fmt"
 	"log/slog"
+	"regexp"
 	"sync"
 	"time"
 
@@ -85,12 +86,12 @@ func (st *Storage) Del(key string) (string, error) {
 	return val, nil
 }
 
-func (st *Storage) Keys(parsedData []string, pattern string) []string {
+func (st *Storage) Keys(pattern *regexp.Regexp) []string {
 	st.storageMu.RLock()
 	defer st.storageMu.RUnlock()
 	keys := make([]string, 0)
 	for key := range st.storage {
-		if matchesPattern(key, pattern) {
+		if match := pattern.MatchString(key); match {
 			keys = append(keys, key)
 		}
 	}
