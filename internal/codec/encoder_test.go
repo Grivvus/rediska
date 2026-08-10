@@ -1,6 +1,7 @@
 package codec_test
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -8,7 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestStringEncoding(t *testing.T) {
+func TestBulkStringEncoding(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
 		given          string
@@ -44,4 +45,42 @@ func TestArrayEncoding(t *testing.T) {
 	for _, tc := range cases {
 		assert.Equal(t, tc.expected, codec.EncodeArray(tc.given))
 	}
+}
+
+func TestSimpleStringEncoding(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		given    string
+		expected []byte
+	}{
+		{"OK", []byte("+OK\r\n")},
+		{"\r\n", []byte("+\r\n\r\n")},
+		{"😀", []byte("+😀\r\n")},
+	}
+
+	for _, tc := range cases {
+		assert.Equal(t, tc.expected, codec.EncodeSimpleString(tc.given))
+	}
+}
+
+func TestErrorEncoding(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		given    error
+		expected []byte
+	}{
+		{fmt.Errorf("error text"), []byte("-error text\r\n")},
+		{fmt.Errorf(""), []byte("-\r\n")},
+	}
+
+	for _, tc := range cases {
+		assert.Equal(t, tc.expected, codec.EncodeError(tc.given))
+	}
+}
+
+func TestNilBulkStringEncoding(t *testing.T) {
+	t.Parallel()
+	assert.Equal(t, []byte("$-1\r\n"), codec.NullBulkString())
 }

@@ -87,34 +87,31 @@ func handleConnection(
 				return
 			}
 			logger.Info("", "bytes recieved", n, "conn", connection)
-			parsedData, err := codec.Parse(readBuffer)
+			command, err := codec.DecodeArray(readBuffer)
 			if err != nil {
 				_, _ = connection.Write(codec.EncodeError(fmt.Errorf("can't parse accepted data: %w", err)))
 				continue
 			}
-			logger.Info("parsing finished", "parsed", parsedData)
-			for _, command := range parsedData {
-				if strings.ToUpper(command[0]) == "PING" {
-					handlePing(connection, command)
-				} else if strings.ToUpper(command[0]) == "ECHO" {
-					handleEcho(connection, command)
-				} else if strings.ToUpper(command[0]) == "SET" {
-					handleSet(connection, command, st)
-				} else if strings.ToUpper(command[0]) == "GET" {
-					handleGet(connection, command, st)
-				} else if strings.ToUpper(command[0]) == "CONFIG" {
-					handleConfig(connection, command, cfg)
-				} else if strings.ToUpper(command[0]) == "INFO" {
-					_, _ = connection.Write(codec.EncodeBulkString(cfg.GetInfo()))
-				} else if strings.ToUpper(command[0]) == "KEYS" {
-					handleKeys(connection, command, st)
-				} else if strings.ToUpper(command[0]) == "SAVE" {
-					handleSave(connection, command, st)
-				} else if strings.ToUpper(command[0]) == "REPLCONF" {
-					replconfHandle(connection, command, &knownReplicas, &needed)
-				} else if strings.ToUpper(command[0]) == "PSYNC" {
-					psyncHandle(connection, command)
-				}
+			if strings.ToUpper(command[0]) == "PING" {
+				handlePing(connection, command)
+			} else if strings.ToUpper(command[0]) == "ECHO" {
+				handleEcho(connection, command)
+			} else if strings.ToUpper(command[0]) == "SET" {
+				handleSet(connection, command, st)
+			} else if strings.ToUpper(command[0]) == "GET" {
+				handleGet(connection, command, st)
+			} else if strings.ToUpper(command[0]) == "CONFIG" {
+				handleConfig(connection, command, cfg)
+			} else if strings.ToUpper(command[0]) == "INFO" {
+				_, _ = connection.Write(codec.EncodeBulkString(cfg.GetInfo()))
+			} else if strings.ToUpper(command[0]) == "KEYS" {
+				handleKeys(connection, command, st)
+			} else if strings.ToUpper(command[0]) == "SAVE" {
+				handleSave(connection, command, st)
+			} else if strings.ToUpper(command[0]) == "REPLCONF" {
+				replconfHandle(connection, command, &knownReplicas, &needed)
+			} else if strings.ToUpper(command[0]) == "PSYNC" {
+				psyncHandle(connection, command)
 			}
 		}
 	}
