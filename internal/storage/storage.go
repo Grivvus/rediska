@@ -130,9 +130,3 @@ func (st *Storage) gcWorker() {
 		st.logger.Info("end gc at", "time", now, "deleted keys", cnt)
 	}
 }
-
-// not implemented
-func matchesPattern(key, pattern string) bool {
-	_, _ = key, pattern
-	return true
-}
